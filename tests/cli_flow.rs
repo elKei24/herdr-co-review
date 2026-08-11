@@ -164,6 +164,23 @@ fn full_agent_flow() {
     assert!(ok, "post --dry-run failed: {err}");
     assert!(out.contains("would post 1 finding"), "unexpected: {out}");
     assert!(out.contains("Check line 2"));
+
+    // sessions lists the live session
+    let (out, _e, ok) = co_review(&home, None, &work, &["sessions"]);
+    assert!(ok);
+    assert!(
+        out.contains("owner/repo #1"),
+        "sessions missing entry: {out}"
+    );
+
+    // end removes the worktree and the session directory
+    let (_o, err, ok) = co_review(&home, None, &work, &["end", "owner/repo#1"]);
+    assert!(ok, "end failed: {err}");
+    assert!(
+        !session.join("state.json").exists(),
+        "session dir not removed"
+    );
+    assert!(!wt.join(".git").exists(), "worktree not removed");
 }
 
 #[test]

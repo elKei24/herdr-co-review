@@ -58,6 +58,12 @@ pub enum Command {
     /// Print a short status summary for a session.
     Status(SessionArgs),
 
+    /// List all co-review sessions on this machine.
+    Sessions,
+
+    /// Remove a co-review session and its worktree.
+    End(EndArgs),
+
     /// Print the agent protocol reference.
     Protocol,
 
@@ -219,6 +225,19 @@ pub struct MarkPostedArgs {
     /// The URL of the posted comment.
     #[arg(long)]
     pub url: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct EndArgs {
+    /// The PR whose session to end: `123`, `owner/repo#123`, or a URL. Optional
+    /// if `--session` is given.
+    pub pr: Option<String>,
+    /// Target a session directory directly instead of resolving from a PR.
+    #[arg(long, value_name = "DIR")]
+    pub session: Option<String>,
+    /// Keep the checked-out worktree; only remove the session state.
+    #[arg(long)]
+    pub keep_worktree: bool,
 }
 
 #[derive(Args, Debug)]

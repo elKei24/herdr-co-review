@@ -393,6 +393,82 @@ fn render_comment_body(f: &Finding) -> String {
     out
 }
 
+/// Enumerate all sessions on disk as `(dir, state)`, oldest first.
+fn all_sessions() -> Result<Vec<(std::path::PathBuf, State)>> {
+    let mut out = Vec::new();
+    let dir = crate::paths::sessions_dir()?;
+    if dir.is_dir() {
+        for entry in
+            std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?
+        {
+            let entry = entry?;
+            let store = Store::new(entry.path());
+            if let Ok(state) = store.read_lossy() {
+                out.push((entry.path(), state));
+            }
+        }
+    }
+    out.sort_by_key(|(_, s)| s.session.created_at_ms);
+    Ok(out)
+}
+
+pub fn sessions() -> Result<()> {
+    let sessions = all_sessions()?;
+    if sessions.is_empty() {
+        println!("no co-review sessions");
+        return Ok(());
+    }
+    for (dir, s) in &sessions {
+        let c = s.counts();
+        println!(
+            "{}/{} #{}  [{}]  {} finding(s) — {} pending, {} approved, {} posted",
+            s.pr.owner,
+            s.pr.repo,
+            s.pr.number,
+            s.status.label(),
+            c.total,
+            c.pending,
+            c.approved,
+            c.posted
+        );
+        println!("    {}", dir.display());
+    }
+    Ok(())
+}
+
+pub fn end(args: &EndArgs) -> Result<()> {
+    let session_dir = match (&args.session, &args.pr) {
+        (Some(s), _) => std::path::PathBuf::from(s),
+        (None, Some(pr)) => crate::orchestrate::session_dir_for_pr(pr)?,
+        (None, None) => bail!("pass a PR (e.g. `co-review end 123`) or --session <dir>"),
+    };
+    let store = Store::new(&session_dir);
+    if !store.exists() {
+        bail!("no co-review session at {}", session_dir.display());
+    }
+    let state = store.read()?;
+
+    if !args.keep_worktree {
+        let wt = std::path::Path::new(&state.session.worktree);
+        if !state.session.source_repo.is_empty() {
+            // Prune it as a git worktree so the source repo's admin data is clean.
+            Git::new(&state.session.source_repo)
+                .remove_worktree(wt)
+                .ok();
+        } else if wt.exists() {
+            std::fs::remove_dir_all(wt).ok();
+        }
+    }
+
+    std::fs::remove_dir_all(&session_dir)
+        .with_context(|| format!("removing session dir {}", session_dir.display()))?;
+    println!(
+        "ended co-review for {}/{} #{}",
+        state.pr.owner, state.pr.repo, state.pr.number
+    );
+    Ok(())
+}
+
 pub fn protocol() -> Result<()> {
     print!("{}", crate::protocol::PROTOCOL_MD);
     Ok(())
@@ -458,25 +534,17 @@ pub fn doctor() -> Result<()> {
     }
 
     // Enumerate any live sessions.
-    if let Ok(sessions) = crate::paths::sessions_dir() {
-        if sessions.is_dir() {
-            let mut any = false;
-            for entry in std::fs::read_dir(&sessions).into_iter().flatten().flatten() {
-                let store = Store::new(entry.path());
-                if let Ok(state) = store.read_lossy() {
-                    if !any {
-                        println!("     sessions:");
-                        any = true;
-                    }
-                    println!(
-                        "       {} #{}  {} finding(s) [{}]",
-                        state.pr.repo,
-                        state.pr.number,
-                        state.findings.len(),
-                        state.status.label()
-                    );
-                }
-            }
+    let sessions = all_sessions().unwrap_or_default();
+    if !sessions.is_empty() {
+        println!("     sessions:");
+        for (_, state) in &sessions {
+            println!(
+                "       {} #{}  {} finding(s) [{}]",
+                state.pr.repo,
+                state.pr.number,
+                state.findings.len(),
+                state.status.label()
+            );
         }
     }
     Ok(())

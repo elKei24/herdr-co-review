@@ -150,6 +150,7 @@ mod tests {
         let session = SessionMeta {
             id: "o-r-1".into(),
             worktree: dir.display().to_string(),
+            source_repo: String::new(),
             created_at_ms: 0,
             agent_pane_id: None,
             view_pane_id: None,

@@ -127,6 +127,18 @@ co-review start 123 --dry-run           # offline preview of everything it will 
 Findings appear live as the agent records them; your verdicts and notes are
 visible to the agent immediately.
 
+## Managing sessions
+
+Each `start` creates an isolated worktree and a session directory that persist
+until you remove them:
+
+```sh
+co-review sessions           # list all sessions with their status and counts
+co-review end 123            # remove PR #123's worktree and session
+co-review end 123 --keep-worktree   # drop the session state but keep the checkout
+co-review start 123 --resume        # reopen / refresh an existing session
+```
+
 ## Configuration
 
 Optional, at `~/.config/co-review/config.toml`. Everything has a default.

@@ -169,6 +169,11 @@ pub struct SessionMeta {
     pub id: String,
     /// Absolute path to the checked-out worktree the agent runs in.
     pub worktree: String,
+    /// Absolute path to the source repository the worktree was created from.
+    /// Recorded so `co-review end` can prune the worktree cleanly. May be empty
+    /// for sessions created before this field existed.
+    #[serde(default)]
+    pub source_repo: String,
     pub created_at_ms: u64,
     /// The Herdr pane id running the agent (e.g. `w3:p1`). Used to inject chat.
     #[serde(default)]
@@ -521,6 +526,7 @@ mod tests {
         SessionMeta {
             id: "elkei24-herdr-co-review-123".into(),
             worktree: "/tmp/wt".into(),
+            source_repo: "/tmp/repo".into(),
             created_at_ms: 1,
             agent_pane_id: None,
             view_pane_id: None,

@@ -82,6 +82,28 @@ fn pr_argument(args: &StartArgs) -> Result<String> {
     bail!("no pull request given. Pass one, e.g. `co-review start 123`.")
 }
 
+/// Resolve a PR reference to its session directory, discovering owner/repo from
+/// the surrounding git repo when the reference is bare. Used by `end`.
+pub fn session_dir_for_pr(pr_arg: &str) -> Result<std::path::PathBuf> {
+    let cwd = std::env::current_dir().context("getting current directory")?;
+    // A bare number needs the repo to resolve owner/repo; a full ref does not.
+    let git = Git::discover(&cwd).ok();
+    let (owner, repo, number) = match &git {
+        Some(g) => resolve_pr_ref(pr_arg, g)?,
+        None => {
+            let pref = crate::pr::parse(pr_arg)?;
+            match (pref.owner, pref.repo) {
+                (Some(o), Some(r)) => (o, r, pref.number),
+                _ => bail!(
+                    "'{pr_arg}' needs an owner/repo (run inside the repo, or pass owner/repo#{})",
+                    pref.number
+                ),
+            }
+        }
+    };
+    crate::paths::session_dir(&crate::model::pr_slug(&owner, &repo, number))
+}
+
 /// Resolve owner/repo/number from the CLI reference and the surrounding repo.
 fn resolve_pr_ref(pr_arg: &str, git: &Git) -> Result<(String, String, u64)> {
     let pref = crate::pr::parse(pr_arg)?;
@@ -185,6 +207,7 @@ pub fn start(args: &StartArgs) -> Result<()> {
     let session_meta = SessionMeta {
         id: slug.clone(),
         worktree: worktree.to_string_lossy().into_owned(),
+        source_repo: git.root().to_string_lossy().into_owned(),
         created_at_ms: crate::util::now_ms(),
         agent_pane_id: None,
         view_pane_id: None,

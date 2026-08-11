@@ -173,6 +173,7 @@ mod tests {
         let session = SessionMeta {
             id: "s".into(),
             worktree: dir.display().to_string(),
+            source_repo: String::new(),
             created_at_ms: 0,
             agent_pane_id: None,
             view_pane_id: None,
@@ -273,6 +274,7 @@ mod tests {
         let session = SessionMeta {
             id: "s".into(),
             worktree: repo.display().to_string(),
+            source_repo: String::new(),
             created_at_ms: 0,
             agent_pane_id: None,
             view_pane_id: None,
@@ -320,6 +322,7 @@ mod tests {
         let session = SessionMeta {
             id: "s".into(),
             worktree: dir.path().display().to_string(),
+            source_repo: String::new(),
             created_at_ms: 0,
             agent_pane_id: None,
             view_pane_id: None,
