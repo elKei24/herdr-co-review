@@ -226,14 +226,34 @@ pub fn start(args: &StartArgs) -> Result<()> {
         store.create(&State::new(pr.clone(), session_meta))?;
     }
 
-    launch_layout(&plan, &store)?;
-
     eprintln!(
         "co-review session ready for {owner}/{repo}#{number}\n  worktree: {}\n  session:  {}",
         worktree.display(),
         session_dir.display()
     );
+
+    // Driving Herdr is the one part we can't verify locally, so never let a
+    // Herdr hiccup lose the (already-prepared) session: on failure, print the
+    // exact commands to open the two panes by hand.
+    if let Err(e) = launch_layout(&plan, &store) {
+        print_manual_fallback(&plan, &e);
+    }
     Ok(())
+}
+
+/// When automatic Herdr layout fails, tell the user how to open the panes.
+fn print_manual_fallback(plan: &LayoutPlan, err: &anyhow::Error) {
+    eprintln!("\nwarning: couldn't set up the Herdr split automatically ({err}).");
+    eprintln!("The worktree and session are ready — open two panes yourself:");
+    eprintln!("  1. cd {}", plan.worktree);
+    eprintln!(
+        "  2. navigator: {}",
+        crate::herdr::shell_join(&plan.view_argv)
+    );
+    match &plan.agent_argv {
+        Some(argv) => eprintln!("  3. agent:     {}", crate::herdr::shell_join(argv)),
+        None => eprintln!("  3. (start your agent in the other pane)"),
+    }
 }
 
 fn resolve_prompt(args: &StartArgs, cfg: &Config) -> Result<String> {
