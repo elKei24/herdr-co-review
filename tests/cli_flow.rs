@@ -1,12 +1,11 @@
-//! End-to-end integration test of the agent-facing flow against a local bare
-//! repository standing in for GitHub. Exercises `start` (worktree + fake Herdr
-//! layout), `add-finding`, `list --json`, `verdict`, `wait`, and `post
-//! --dry-run` through the real compiled binary.
+//! End-to-end integration tests of the agent-facing flow against a local bare
+//! repository standing in for GitHub. They drive the real compiled binary.
 //!
 //! Skips gracefully if `git` is unavailable. No network: the GitHub token is
-//! forced empty so `start` takes the pure-git fallback path.
+//! forced empty so `start` takes the pure-git fallback path, and
+//! `CO_REVIEW_FAKE_HERDR=1` makes the Herdr layer print instead of execute.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn bin() -> &'static str {
@@ -61,24 +60,15 @@ fn co_review(
     )
 }
 
-#[test]
-fn full_agent_flow() {
-    if !have_git() {
-        eprintln!("git unavailable; skipping");
-        return;
-    }
-
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    let bare = root.path().join("origin.git");
-    let work = root.path().join("work");
-
+/// A fresh clone of an empty bare "origin", with git identity configured.
+/// Returns `(co_review_home, work_repo)`.
+fn new_clone(root: &Path) -> (PathBuf, PathBuf) {
+    let home = root.join("home");
+    let bare = root.join("origin.git");
+    let work = root.join("work");
+    git(root, &["init", "-q", "--bare", bare.to_str().unwrap()]);
     git(
-        root.path(),
-        &["init", "-q", "--bare", bare.to_str().unwrap()],
-    );
-    git(
-        root.path(),
+        root,
         &[
             "clone",
             "-q",
@@ -88,6 +78,13 @@ fn full_agent_flow() {
     );
     git(&work, &["config", "user.email", "t@t"]);
     git(&work, &["config", "user.name", "t"]);
+    (home, work)
+}
+
+/// A standard PR: `main` holds the base file, and a feature branch (pushed to
+/// `refs/pull/1/head`) changes line 2 and adds line 4.
+fn make_pr_repo(root: &Path) -> (PathBuf, PathBuf) {
+    let (home, work) = new_clone(root);
     std::fs::write(work.join("f.txt"), "a\nb\nc\n").unwrap();
     git(&work, &["add", "."]);
     git(&work, &["commit", "-qm", "base"]);
@@ -96,11 +93,23 @@ fn full_agent_flow() {
     std::fs::write(work.join("f.txt"), "a\nB2\nc\nd\n").unwrap();
     git(&work, &["commit", "-qam", "change"]);
     git(&work, &["push", "-q", "origin", "HEAD:refs/pull/1/head"]);
+    (home, work)
+}
+
+#[test]
+fn full_agent_flow() {
+    if !have_git() {
+        eprintln!("git unavailable; skipping");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (home, work) = make_pr_repo(root.path());
+    let session = home.join("sessions").join("owner-repo-1");
+    let wt = home.join("worktrees").join("owner-repo-1");
 
     // start
     let (_o, err, ok) = co_review(&home, None, &work, &["start", "owner/repo#1"]);
     assert!(ok, "start failed: {err}");
-    let session = home.join("sessions").join("owner-repo-1");
     assert!(
         session.join("state.json").is_file(),
         "state.json not created"
@@ -109,8 +118,6 @@ fn full_agent_flow() {
         session.join("CO_REVIEW.md").is_file(),
         "protocol file not written"
     );
-    // worktree checked out at head
-    let wt = home.join("worktrees").join("owner-repo-1");
     assert_eq!(
         std::fs::read_to_string(wt.join("f.txt")).unwrap(),
         "a\nB2\nc\nd\n"
@@ -212,24 +219,7 @@ fn resume_updates_worktree_to_new_head() {
         return;
     }
     let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    let bare = root.path().join("origin.git");
-    let work = root.path().join("work");
-    git(
-        root.path(),
-        &["init", "-q", "--bare", bare.to_str().unwrap()],
-    );
-    git(
-        root.path(),
-        &[
-            "clone",
-            "-q",
-            bare.to_str().unwrap(),
-            work.to_str().unwrap(),
-        ],
-    );
-    git(&work, &["config", "user.email", "t@t"]);
-    git(&work, &["config", "user.name", "t"]);
+    let (home, work) = new_clone(root.path());
     std::fs::write(work.join("f.txt"), "one\n").unwrap();
     git(&work, &["add", "."]);
     git(&work, &["commit", "-qm", "base"]);
@@ -272,36 +262,11 @@ fn edit_resets_decided_verdict_and_clears_fields() {
         return;
     }
     let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    let bare = root.path().join("origin.git");
-    let work = root.path().join("work");
-    git(
-        root.path(),
-        &["init", "-q", "--bare", bare.to_str().unwrap()],
-    );
-    git(
-        root.path(),
-        &[
-            "clone",
-            "-q",
-            bare.to_str().unwrap(),
-            work.to_str().unwrap(),
-        ],
-    );
-    git(&work, &["config", "user.email", "t@t"]);
-    git(&work, &["config", "user.name", "t"]);
-    std::fs::write(work.join("f.txt"), "a\nb\n").unwrap();
-    git(&work, &["add", "."]);
-    git(&work, &["commit", "-qm", "base"]);
-    git(&work, &["push", "-q", "origin", "HEAD:main"]);
-    git(&work, &["checkout", "-q", "-b", "feature"]);
-    std::fs::write(work.join("f.txt"), "a\nB\n").unwrap();
-    git(&work, &["commit", "-qam", "c"]);
-    git(&work, &["push", "-q", "origin", "HEAD:refs/pull/1/head"]);
+    let (home, work) = make_pr_repo(root.path());
+    let session = home.join("sessions").join("owner-repo-1");
 
     let (_o, err, ok) = co_review(&home, None, &work, &["start", "owner/repo#1"]);
     assert!(ok, "start failed: {err}");
-    let session = home.join("sessions").join("owner-repo-1");
 
     co_review(
         &home,
