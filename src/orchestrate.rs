@@ -72,6 +72,20 @@ pub fn plan_layout(
     }
 }
 
+/// The PR reference to act on: the CLI argument, or — when launched from Herdr's
+/// GitHub-PR link handler — the clicked URL.
+fn pr_argument(args: &StartArgs) -> Result<String> {
+    if let Some(pr) = &args.pr {
+        return Ok(pr.clone());
+    }
+    if let Ok(url) = std::env::var("HERDR_PLUGIN_CLICKED_URL") {
+        if !url.trim().is_empty() {
+            return Ok(url);
+        }
+    }
+    bail!("no pull request given. Pass one, e.g. `co-review start 123`.")
+}
+
 /// Resolve owner/repo/number from the CLI reference and the surrounding repo.
 fn resolve_pr_ref(pr_arg: &str, git: &Git) -> Result<(String, String, u64)> {
     let pref = crate::pr::parse(pr_arg)?;
@@ -94,7 +108,8 @@ pub fn start(args: &StartArgs) -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let git = Git::discover(&cwd)?;
 
-    let (owner, repo, number) = resolve_pr_ref(&args.pr, &git)?;
+    let pr_arg = pr_argument(args)?;
+    let (owner, repo, number) = resolve_pr_ref(&pr_arg, &git)?;
 
     // Choose the agent and render the prompt.
     let agent_name = args.agent.clone().unwrap_or_else(|| cfg.default_agent.clone());

@@ -1,0 +1,20 @@
+{
+  "name": "herdr-co-review",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Release and commit-lint tooling for co-review. The product itself is the Rust crate; this package only holds JavaScript devtooling.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elKei24/herdr-co-review.git"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^7.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.1",
+    "semantic-release": "^24.2.1"
+  }
+}

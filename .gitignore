@@ -1,6 +1,10 @@
 /target
+/dist
 **/*.rs.bk
 Cargo.lock.orig
+
+# npm devtooling (semantic-release / commitlint)
+/node_modules
 
 # co-review local state / worktrees (should never be committed)
 /.co-review/

@@ -80,7 +80,9 @@ pub struct SessionArgs {
 #[derive(Args, Debug)]
 pub struct StartArgs {
     /// The pull request: `123`, `#123`, `owner/repo#123`, or a full GitHub URL.
-    pub pr: String,
+    /// Optional when invoked from Herdr's GitHub-PR link handler, which supplies
+    /// it via $HERDR_PLUGIN_CLICKED_URL.
+    pub pr: Option<String>,
 
     /// Agent to drive the review (must exist in config). Defaults to config's
     /// `default_agent`.
