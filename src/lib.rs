@@ -7,6 +7,14 @@
 //! - [`store`] — lock-guarded persistence of that state.
 //! - [`util`] — small shared helpers.
 
+pub mod config;
+pub mod exec;
+pub mod git;
+pub mod github;
+pub mod herdr;
 pub mod model;
+pub mod paths;
+pub mod pr;
+pub mod protocol;
 pub mod store;
 pub mod util;
