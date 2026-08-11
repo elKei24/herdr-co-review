@@ -31,6 +31,11 @@ pub struct State {
     /// state so ids are stable and never reused even after deletions.
     #[serde(default)]
     pub next_finding_seq: u64,
+    /// Monotonic revision, bumped by the store on every write. Lets readers (the
+    /// navigator) detect *any* change reliably, without depending on filesystem
+    /// mtime granularity.
+    #[serde(default)]
+    pub rev: u64,
 }
 
 impl State {
@@ -43,6 +48,7 @@ impl State {
             findings: Vec::new(),
             chat: Vec::new(),
             next_finding_seq: 0,
+            rev: 0,
         }
     }
 
@@ -71,6 +77,15 @@ impl State {
             .iter()
             .filter(|f| f.verdict == Verdict::Pending)
             .count()
+    }
+
+    /// Whether the review is ready for the agent to proceed to posting: every
+    /// finding is decided AND the agent has actually started producing findings
+    /// or explicitly handed off. This prevents `wait` from returning before any
+    /// finding is recorded (the initial empty "reviewing" state).
+    pub fn handoff_complete(&self) -> bool {
+        self.pending_count() == 0
+            && (self.status != ReviewStatus::Reviewing || !self.findings.is_empty())
     }
 }
 
@@ -247,11 +262,13 @@ impl Location {
         if s.is_empty() {
             return Err("empty location".to_string());
         }
+        // Only a trailing `@head`/`@base` is a side selector; any other `@`
+        // (e.g. an npm-scope path like `packages/@scope/x.rs:10`) is part of the
+        // path.
         let (rest, side) = match s.rsplit_once('@') {
             Some((r, "head")) => (r, Side::Head),
             Some((r, "base")) => (r, Side::Base),
-            Some((_, other)) => return Err(format!("unknown location side '@{other}'")),
-            None => (s, Side::Head),
+            _ => (s, Side::Head),
         };
         let (file, lines) = rest
             .rsplit_once(':')
@@ -469,6 +486,23 @@ mod tests {
     }
 
     #[test]
+    fn handoff_complete_semantics() {
+        let mut s = State::new(sample_pr(), sample_session());
+        // empty + reviewing => not complete (nothing recorded yet)
+        assert!(!s.handoff_complete());
+        // empty + explicitly handed off => complete (a clean review, nothing to triage)
+        s.status = ReviewStatus::AwaitingReview;
+        assert!(s.handoff_complete());
+        // a pending finding => not complete
+        s.status = ReviewStatus::Reviewing;
+        s.findings.push(Finding::new("f1".into(), "t".into()));
+        assert!(!s.handoff_complete());
+        // decided => complete
+        s.findings[0].verdict = Verdict::Approved;
+        assert!(s.handoff_complete());
+    }
+
+    #[test]
     fn postable_filters_correctly() {
         let mut s = State::new(sample_pr(), sample_session());
         let mut f1 = Finding::new("f1".into(), "a".into());
@@ -501,9 +535,14 @@ mod tests {
         // start == end collapses to single-line
         assert_eq!(Location::parse("x.rs:7-7").unwrap().end_line, None);
 
+        // An npm-scope style path keeps its '@'.
+        let scoped = Location::parse("packages/@scope/pkg/x.rs:10").unwrap();
+        assert_eq!(scoped.file, "packages/@scope/pkg/x.rs");
+        assert_eq!(scoped.start_line, 10);
+
         assert!(Location::parse("noline").is_err());
         assert!(Location::parse("x.rs:0").is_err());
-        assert!(Location::parse("x.rs:5@weird").is_err());
+        assert!(Location::parse("x.rs:5@weird").is_err()); // '5@weird' isn't a line
         assert!(Location::parse(":5").is_err());
     }
 

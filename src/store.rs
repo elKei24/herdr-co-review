@@ -86,7 +86,10 @@ impl Store {
         Ok(state)
     }
 
-    fn write_unlocked(&self, state: &State) -> Result<()> {
+    fn write_unlocked(&self, state: &mut State) -> Result<()> {
+        // Bump the revision so readers detect the change regardless of mtime
+        // granularity.
+        state.rev = state.rev.wrapping_add(1);
         let json = serde_json::to_vec_pretty(state).context("serializing session state")?;
         crate::util::atomic_write(&self.state_path(), &json)
     }
@@ -108,7 +111,8 @@ impl Store {
     /// Write an initial state. Overwrites any existing file (used by `start`).
     pub fn create(&self, state: &State) -> Result<()> {
         let _guard = self.lock()?;
-        self.write_unlocked(state)
+        let mut state = state.clone();
+        self.write_unlocked(&mut state)
     }
 
     /// Atomically read-modify-write the state. The closure receives a mutable
@@ -119,7 +123,7 @@ impl Store {
         let _guard = self.lock()?;
         let mut state = self.read_unlocked()?;
         let out = f(&mut state)?;
-        self.write_unlocked(&state)?;
+        self.write_unlocked(&mut state)?;
         Ok(out)
     }
 }
@@ -210,6 +214,20 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), 200);
+    }
+
+    #[test]
+    fn rev_increments_on_every_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path()); // create() -> rev 1
+        let r0 = store.read().unwrap().rev;
+        assert_eq!(r0, 1);
+        store.update(|_| Ok(())).unwrap();
+        let r1 = store.read().unwrap().rev;
+        assert_eq!(r1, 2);
+        // a plain read does not bump the revision
+        let r2 = store.read().unwrap().rev;
+        assert_eq!(r2, 2);
     }
 
     #[test]

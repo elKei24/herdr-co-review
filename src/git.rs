@@ -70,6 +70,18 @@ impl Git {
         .with_context(|| format!("adding worktree at {} for {rev}", path.display()))
     }
 
+    /// Force the checkout inside an existing worktree to `rev` (detached). Used
+    /// on `--resume` when the PR head has advanced since the worktree was made.
+    pub fn checkout_detach_in(&self, worktree: &Path, rev: &str) -> Result<()> {
+        let wt = worktree.to_string_lossy().into_owned();
+        exec::run(
+            "git",
+            &["-C", &wt, "checkout", "--force", "--detach", rev],
+            Some(&self.repo),
+        )
+        .with_context(|| format!("checking out {rev} in {}", worktree.display()))
+    }
+
     /// Remove a worktree (best effort; also prunes the admin entry).
     pub fn remove_worktree(&self, path: &Path) -> Result<()> {
         let path_s = path.to_string_lossy().into_owned();
@@ -99,20 +111,24 @@ impl Git {
         }
     }
 
-    /// The unified diff for a single file between two revisions.
+    /// The unified diff for a single file, as GitHub shows it: from the
+    /// merge-base of `base` and `head` to `head` (three-dot range). Using a
+    /// two-dot range would fold in unrelated changes made on the base branch
+    /// after the PR branched, mis-coloring the "related code" view.
     pub fn diff_file(&self, base: &str, head: &str, file: &str) -> Result<String> {
         self.git(&[
             "diff",
             "--no-color",
-            &format!("{base}..{head}"),
+            &format!("{base}...{head}"),
             "--",
             file,
         ])
     }
 
-    /// The list of files changed between two revisions.
+    /// The list of files changed between the merge-base of `base` and `head` and
+    /// `head` (three-dot range, matching GitHub's diff).
     pub fn changed_files(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        let out = self.git(&["diff", "--name-only", &format!("{base}..{head}")])?;
+        let out = self.git(&["diff", "--name-only", &format!("{base}...{head}")])?;
         Ok(out.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()).collect())
     }
 

@@ -110,11 +110,17 @@ struct IncomingFinding {
 impl IncomingFinding {
     fn to_finding(&self, id: String) -> Finding {
         let mut f = Finding::new(id, self.title.clone());
-        f.severity = self
-            .severity
-            .as_deref()
-            .and_then(Severity::parse)
-            .unwrap_or_default();
+        f.severity = match self.severity.as_deref() {
+            Some(s) => Severity::parse(s).unwrap_or_else(|| {
+                eprintln!(
+                    "warning: unknown severity '{s}' on \"{}\"; defaulting to {}",
+                    self.title,
+                    Severity::default().label()
+                );
+                Severity::default()
+            }),
+            None => Severity::default(),
+        };
         f.category = self.category.clone();
         f.body = self.body.clone();
         f.suggestion = self.suggestion.clone();
@@ -322,7 +328,9 @@ pub fn wait(args: &WaitArgs) -> Result<()> {
     loop {
         let state = store.read()?;
         let pending = state.pending_count();
-        if pending == 0 {
+        // Don't treat the initial empty "reviewing" state as "all decided" — that
+        // would let `wait` return before any finding is recorded.
+        if state.handoff_complete() {
             eprintln!(
                 "all {} finding(s) decided; proceed to post the approved ones",
                 state.findings.len()

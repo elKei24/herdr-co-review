@@ -69,10 +69,15 @@ pub fn parse_unified_diff(diff: &str) -> Vec<DiffLine> {
 
     for line in diff.lines() {
         if let Some(header) = line.strip_prefix("@@") {
-            if let Some((o, n)) = parse_hunk_header(header) {
-                old_no = o;
-                new_no = n;
-                in_hunk = true;
+            match parse_hunk_header(header) {
+                Some((o, n)) => {
+                    old_no = o;
+                    new_no = n;
+                    in_hunk = true;
+                }
+                // Unparseable header: stop consuming body lines rather than
+                // numbering them from the previous hunk's counters.
+                None => in_hunk = false,
             }
             continue;
         }
@@ -353,6 +358,17 @@ index 111..222 100644
         // the trailing context line numbers continue
         let last_ctx = lines.iter().rev().find(|l| l.kind == LineKind::Context).unwrap();
         assert_eq!(last_ctx.new, Some(5));
+    }
+
+    #[test]
+    fn unparseable_hunk_header_stops_numbering() {
+        // A malformed second hunk header must not keep numbering body lines from
+        // the previous hunk's counters.
+        let diff = "@@ -1,1 +1,1 @@\n a\n@@ garbage @@\n b\n";
+        let lines = parse_unified_diff(diff);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "a");
+        assert_eq!(lines[0].new, Some(1));
     }
 
     #[test]

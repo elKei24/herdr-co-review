@@ -1,7 +1,7 @@
 //! State and behavior of the navigator TUI.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::style::{Color, Modifier, Style};
@@ -32,7 +32,7 @@ pub struct CodeBlock {
 pub struct App {
     store: Store,
     pub state: State,
-    last_mtime: Option<SystemTime>,
+    last_rev: u64,
 
     git: Option<Git>,
     worktree: PathBuf,
@@ -58,10 +58,11 @@ impl App {
         let state = store.read()?;
         let worktree = PathBuf::from(&state.session.worktree);
         let git = Git::discover(&worktree).ok();
+        let last_rev = state.rev;
         let mut app = App {
             store,
             state,
-            last_mtime: None,
+            last_rev,
             git,
             worktree,
             herdr: Herdr::new(false),
@@ -77,16 +78,9 @@ impl App {
             cached_for: None,
             code_blocks: Vec::new(),
         };
-        app.last_mtime = app.current_mtime();
         app.sync_selection();
         app.refresh_code();
         Ok(app)
-    }
-
-    fn current_mtime(&self) -> Option<SystemTime> {
-        std::fs::metadata(self.store.state_path())
-            .and_then(|m| m.modified())
-            .ok()
     }
 
     /// The currently selected finding id, if any.
@@ -111,15 +105,16 @@ impl App {
         }
     }
 
-    /// Reload state from disk if the file changed, preserving the selected
-    /// finding by id.
+    /// Reload state from disk if its revision advanced, preserving the selected
+    /// finding by id. Reads on every tick (cheap for a small JSON) and compares
+    /// the monotonic `rev`, so no change is ever missed to mtime granularity.
     pub fn poll_reload(&mut self) {
-        let mtime = self.current_mtime();
-        if mtime != self.last_mtime {
-            self.last_mtime = mtime;
-            if let Ok(state) = self.store.read_lossy() {
+        if let Ok(state) = self.store.read_lossy() {
+            if state.rev != self.last_rev {
+                self.last_rev = state.rev;
                 self.state = state;
                 self.sync_selection();
+                self.cached_for = None; // rebuild code against possibly-new shas/locations
                 self.refresh_code();
             }
         }
@@ -315,10 +310,11 @@ impl App {
     }
 
     fn reload_now(&mut self) {
-        self.last_mtime = self.current_mtime();
         if let Ok(state) = self.store.read_lossy() {
+            self.last_rev = state.rev;
             self.state = state;
             self.sync_selection();
+            self.cached_for = None;
             self.refresh_code();
         }
     }

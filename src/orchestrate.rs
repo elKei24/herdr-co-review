@@ -287,7 +287,9 @@ fn prepare_worktree(git: &Git, worktree: &Path, pr: &PrInfo, resume: bool) -> Re
 
     if git.worktree_exists(worktree) {
         if resume {
-            return Ok(());
+            // Reuse the worktree but move it to the (possibly newer) head so the
+            // files and line numbers match the metadata we just refreshed.
+            return git.checkout_detach_in(worktree, &checkout_rev);
         }
         // Recreate it clean.
         git.remove_worktree(worktree).ok();
