@@ -92,10 +92,22 @@ impl Herdr {
                 first_pane: "w1:p1".into(),
             });
         }
-        let first_pane = parse_pane_id(&out).ok_or_else(|| {
-            anyhow!("could not parse a pane id from `herdr workspace create` output: {out:?}")
-        })?;
-        let id = workspace_of(&first_pane);
+        // Prefer an explicit pane id in the output; otherwise fall back to a
+        // bare workspace id and assume its first pane (`wN` -> `wN:p1`), since
+        // `herdr workspace create` may report only the new workspace.
+        let (id, first_pane) = match parse_pane_id(&out) {
+            Some(pane) => (workspace_of(&pane), pane),
+            None => {
+                let wid = parse_workspace_id(&out).ok_or_else(|| {
+                    anyhow!(
+                        "could not parse a workspace or pane id from \
+                         `herdr workspace create` output: {out:?}"
+                    )
+                })?;
+                let pane = format!("{wid}:p1");
+                (wid, pane)
+            }
+        };
         Ok(Workspace { id, first_pane })
     }
 
@@ -231,6 +243,16 @@ fn parse_pane_id(text: &str) -> Option<PaneId> {
     None
 }
 
+/// Extract the first bare workspace id (`wN`) appearing in some text.
+fn parse_workspace_id(text: &str) -> Option<WorkspaceId> {
+    for tok in text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ':')) {
+        if is_wid(tok) {
+            return Some(tok.to_string());
+        }
+    }
+    None
+}
+
 fn is_pane_id(tok: &str) -> bool {
     let Some((w, p)) = tok.split_once(':') else {
         return false;
@@ -292,6 +314,21 @@ mod tests {
         assert_eq!(parse_pane_id("no id here"), None);
         assert!(is_wid("w3"));
         assert!(!is_wid("x3"));
+    }
+
+    #[test]
+    fn workspace_id_fallback() {
+        assert_eq!(
+            parse_workspace_id("created workspace w5"),
+            Some("w5".to_string())
+        );
+        assert_eq!(
+            parse_workspace_id(r#"{"workspace":"w7"}"#),
+            Some("w7".to_string())
+        );
+        assert_eq!(parse_workspace_id("nothing here"), None);
+        // a full pane id should still yield its workspace part
+        assert_eq!(parse_workspace_id("w3:p1"), Some("w3".to_string()));
     }
 
     #[test]

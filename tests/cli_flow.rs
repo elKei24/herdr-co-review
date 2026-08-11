@@ -184,6 +184,65 @@ fn full_agent_flow() {
 }
 
 #[test]
+fn resume_updates_worktree_to_new_head() {
+    if !have_git() {
+        eprintln!("git unavailable; skipping");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let bare = root.path().join("origin.git");
+    let work = root.path().join("work");
+    git(
+        root.path(),
+        &["init", "-q", "--bare", bare.to_str().unwrap()],
+    );
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            bare.to_str().unwrap(),
+            work.to_str().unwrap(),
+        ],
+    );
+    git(&work, &["config", "user.email", "t@t"]);
+    git(&work, &["config", "user.name", "t"]);
+    std::fs::write(work.join("f.txt"), "one\n").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-qm", "base"]);
+    git(&work, &["push", "-q", "origin", "HEAD:main"]);
+    git(&work, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(work.join("f.txt"), "one\ntwo\n").unwrap();
+    git(&work, &["commit", "-qam", "v1"]);
+    git(&work, &["push", "-q", "origin", "HEAD:refs/pull/1/head"]);
+
+    let (_o, err, ok) = co_review(&home, None, &work, &["start", "owner/repo#1"]);
+    assert!(ok, "start failed: {err}");
+    let wt = home.join("worktrees").join("owner-repo-1");
+    assert_eq!(
+        std::fs::read_to_string(wt.join("f.txt")).unwrap(),
+        "one\ntwo\n"
+    );
+
+    // PR gains a new commit; force-update the pull ref.
+    std::fs::write(work.join("f.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&work, &["commit", "-qam", "v2"]);
+    git(
+        &work,
+        &["push", "-q", "-f", "origin", "HEAD:refs/pull/1/head"],
+    );
+
+    // resume should move the worktree to the new head.
+    let (_o, err, ok) = co_review(&home, None, &work, &["start", "owner/repo#1", "--resume"]);
+    assert!(ok, "resume failed: {err}");
+    assert_eq!(
+        std::fs::read_to_string(wt.join("f.txt")).unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[test]
 fn doctor_runs_without_a_session() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
