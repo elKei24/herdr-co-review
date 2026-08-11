@@ -349,7 +349,19 @@ pub fn post(args: &PostArgs) -> Result<()> {
             start_line: Some(loc.start_line),
             side: loc.side,
         };
-        let url = client.post_review_comment(&state.pr, &comment)?;
+        // Fall back to a general PR comment if the inline comment is rejected
+        // (most commonly because the referenced line isn't part of the diff).
+        let url = match client.post_review_comment(&state.pr, &comment) {
+            Ok(url) => url,
+            Err(e) => {
+                eprintln!(
+                    "{}: inline comment failed ({e}); posting as a PR comment",
+                    f.id
+                );
+                let body = format!("{}\n\n_re `{}`_", render_comment_body(f), loc.label());
+                client.post_issue_comment(&state.pr, &body)?
+            }
+        };
         store.update(|st| {
             if let Some(ff) = st.finding_mut(&f.id) {
                 ff.posted = true;

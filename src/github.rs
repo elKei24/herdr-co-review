@@ -101,6 +101,24 @@ impl Client {
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow!("GitHub response had no html_url"))
     }
+
+    /// Post a general (non-inline) comment on the PR conversation. Used as a
+    /// fallback when an inline comment is rejected (e.g. the line isn't part of
+    /// the diff). Returns the created comment's html URL.
+    pub fn post_issue_comment(&self, pr: &PrInfo, body: &str) -> Result<String> {
+        let url = format!(
+            "{API_ROOT}/repos/{}/{}/issues/{}/comments",
+            pr.owner, pr.repo, pr.number
+        );
+        let value = self
+            .post(&url, json!({ "body": body }))
+            .with_context(|| format!("posting a PR comment on {}", pr.number))?;
+        value
+            .get("html_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("GitHub response had no html_url"))
+    }
 }
 
 /// The pieces of an inline review comment.
