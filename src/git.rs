@@ -137,9 +137,11 @@ pub fn pr_head_ref(number: u64) -> String {
     format!("refs/co-review/pr-{number}")
 }
 
-/// The refspec that fetches a PR head into [`pr_head_ref`].
+/// The refspec that fetches a PR head into [`pr_head_ref`]. The leading `+`
+/// force-updates our private local ref so `--resume` works after the PR was
+/// rebased or force-pushed (a non-fast-forward head).
 pub fn pr_head_refspec(number: u64) -> String {
-    format!("pull/{number}/head:{}", pr_head_ref(number))
+    format!("+pull/{number}/head:{}", pr_head_ref(number))
 }
 
 /// Read a file from a worktree directly off the filesystem (faster than `git
@@ -160,7 +162,7 @@ mod tests {
     #[test]
     fn refspec_helpers() {
         assert_eq!(pr_head_ref(123), "refs/co-review/pr-123");
-        assert_eq!(pr_head_refspec(123), "pull/123/head:refs/co-review/pr-123");
+        assert_eq!(pr_head_refspec(123), "+pull/123/head:refs/co-review/pr-123");
     }
 
     /// End-to-end against a real temp git repo: create commits, add a worktree,

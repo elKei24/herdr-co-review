@@ -173,8 +173,9 @@ fn full_agent_flow() {
         "sessions missing entry: {out}"
     );
 
-    // end removes the worktree and the session directory
-    let (_o, err, ok) = co_review(&home, None, &work, &["end", "owner/repo#1"]);
+    // end removes the worktree and the session directory (--force: panes still
+    // recorded from the fake-herdr start)
+    let (_o, err, ok) = co_review(&home, None, &work, &["end", "owner/repo#1", "--force"]);
     assert!(ok, "end failed: {err}");
     assert!(
         !session.join("state.json").exists(),
@@ -225,9 +226,10 @@ fn resume_updates_worktree_to_new_head() {
         "one\ntwo\n"
     );
 
-    // PR gains a new commit; force-update the pull ref.
+    // PR is rebased/amended so its head no longer descends from what we fetched
+    // (a non-fast-forward update — the case the `+` in the refspec handles).
     std::fs::write(work.join("f.txt"), "one\ntwo\nthree\n").unwrap();
-    git(&work, &["commit", "-qam", "v2"]);
+    git(&work, &["commit", "-qam", "v1 amended", "--amend"]);
     git(
         &work,
         &["push", "-q", "-f", "origin", "HEAD:refs/pull/1/head"],

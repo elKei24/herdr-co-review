@@ -238,6 +238,9 @@ pub struct EndArgs {
     /// Keep the checked-out worktree; only remove the session state.
     #[arg(long)]
     pub keep_worktree: bool,
+    /// End the session even if its Herdr panes still look active.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]

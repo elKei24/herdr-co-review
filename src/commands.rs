@@ -401,7 +401,9 @@ fn all_sessions() -> Result<Vec<(std::path::PathBuf, State)>> {
         for entry in
             std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?
         {
-            let entry = entry?;
+            // Tolerate a single unreadable entry (permissions, a delete race)
+            // rather than failing the whole listing.
+            let Ok(entry) = entry else { continue };
             let store = Store::new(entry.path());
             if let Ok(state) = store.read_lossy() {
                 out.push((entry.path(), state));
@@ -448,6 +450,21 @@ pub fn end(args: &EndArgs) -> Result<()> {
     }
     let state = store.read()?;
 
+    // Guard against wiping a session whose Herdr panes are still open (which
+    // would orphan the agent/navigator and could discard uncommitted work).
+    let looks_active = state.status != ReviewStatus::Done
+        && (state.session.agent_pane_id.is_some() || state.session.view_pane_id.is_some());
+    if looks_active && !args.force {
+        bail!(
+            "session for {}/{} #{} looks active (status: {}, panes still recorded).\n\
+             Close its Herdr panes first, or pass --force to end it anyway.",
+            state.pr.owner,
+            state.pr.repo,
+            state.pr.number,
+            state.status.label()
+        );
+    }
+
     if !args.keep_worktree {
         let wt = std::path::Path::new(&state.session.worktree);
         if !state.session.source_repo.is_empty() {
@@ -456,7 +473,14 @@ pub fn end(args: &EndArgs) -> Result<()> {
                 .remove_worktree(wt)
                 .ok();
         } else if wt.exists() {
+            // Pre-`source_repo` session: remove the checkout, then best-effort
+            // prune the stale worktree registration from the surrounding repo.
             std::fs::remove_dir_all(wt).ok();
+            if let Ok(cwd) = std::env::current_dir() {
+                if let Ok(git) = Git::discover(&cwd) {
+                    let _ = git.remove_worktree(wt);
+                }
+            }
         }
     }
 
