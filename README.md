@@ -134,6 +134,7 @@ until you remove them:
 
 ```sh
 co-review sessions           # list all sessions with their status and counts
+co-review view 123           # reopen the navigator for PR #123
 co-review end 123            # remove PR #123's worktree and session
 co-review end 123 --keep-worktree   # drop the session state but keep the checkout
 co-review start 123 --resume        # reopen / refresh an existing session

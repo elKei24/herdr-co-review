@@ -20,15 +20,18 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::cli::SessionArgs;
+use crate::cli::ViewArgs;
 use crate::model::Verdict;
 use crate::store::Store;
 use app::{App, Input};
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
-pub fn view(args: &SessionArgs) -> Result<()> {
-    let dir = crate::paths::resolve_session_dir(args.session.as_deref())?;
+pub fn view(args: &ViewArgs) -> Result<()> {
+    let dir = match &args.pr {
+        Some(pr) => crate::orchestrate::session_dir_for_pr(pr)?,
+        None => crate::paths::resolve_session_dir(args.session.session.as_deref())?,
+    };
     let store = Store::new(dir);
     let mut app = App::new(store).context("loading co-review session")?;
 

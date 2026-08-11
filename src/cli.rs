@@ -24,8 +24,8 @@ pub enum Command {
     Start(StartArgs),
 
     /// Run the findings navigator TUI (normally launched into the right pane by
-    /// `start`; you can also run it standalone against a session).
-    View(SessionArgs),
+    /// `start`; you can also reopen it for an existing session).
+    View(ViewArgs),
 
     /// [agent] Record a review finding.
     AddFinding(AddFindingArgs),
@@ -84,6 +84,15 @@ pub struct SessionArgs {
     /// existing session.
     #[arg(long, value_name = "DIR", global = true)]
     pub session: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ViewArgs {
+    #[command(flatten)]
+    pub session: SessionArgs,
+    /// Reopen the navigator for this PR (e.g. `123` or `owner/repo#123`) instead
+    /// of using --session or $CO_REVIEW_SESSION.
+    pub pr: Option<String>,
 }
 
 #[derive(Args, Debug)]
