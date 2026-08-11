@@ -125,13 +125,6 @@ impl Git {
         ])
     }
 
-    /// The list of files changed between the merge-base of `base` and `head` and
-    /// `head` (three-dot range, matching GitHub's diff).
-    pub fn changed_files(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        let out = self.git(&["diff", "--name-only", &format!("{base}...{head}")])?;
-        Ok(out.lines().map(|l| l.to_string()).filter(|l| !l.is_empty()).collect())
-    }
-
     /// The merge-base of two revisions (the effective diff base for a PR).
     pub fn merge_base(&self, a: &str, b: &str) -> Result<String> {
         self.git(&["merge-base", a, b])
@@ -167,10 +160,7 @@ mod tests {
     #[test]
     fn refspec_helpers() {
         assert_eq!(pr_head_ref(123), "refs/co-review/pr-123");
-        assert_eq!(
-            pr_head_refspec(123),
-            "pull/123/head:refs/co-review/pr-123"
-        );
+        assert_eq!(pr_head_refspec(123), "pull/123/head:refs/co-review/pr-123");
     }
 
     /// End-to-end against a real temp git repo: create commits, add a worktree,
@@ -207,9 +197,6 @@ mod tests {
         // diff mentions the change
         let diff = g.diff_file(&base, &head, "a.txt").unwrap();
         assert!(diff.contains("CHANGED"));
-        // changed files
-        let changed = g.changed_files(&base, &head).unwrap();
-        assert_eq!(changed, vec!["a.txt".to_string()]);
 
         // worktree add + filesystem read
         let wt = dir.path().join("wt");

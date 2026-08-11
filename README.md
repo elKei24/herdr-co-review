@@ -135,9 +135,6 @@ Optional, at `~/.config/co-review/config.toml`. Everything has a default.
 # Which agent to use when --agent is not given.
 default_agent = "claude"
 
-# Fraction of the width given to the agent (left) pane.
-agent_pane_ratio = 0.6
-
 # The prompt handed to the agent. `{pr}` and `{protocol}` are substituted.
 # Omit to use the built-in prompt (which runs your code-review skill and routes
 # findings through co-review). See `co-review prompt`.

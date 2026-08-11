@@ -89,12 +89,8 @@ impl Client {
     }
 
     /// Post an inline review comment. Returns the created comment's html URL.
-    pub fn post_review_comment(
-        &self,
-        pr: &PrInfo,
-        comment: &ReviewComment,
-    ) -> Result<String> {
-        let url = format!("{API_ROOT}/repos/{}/{}/pulls/{}/comments", pr.owner, pr.repo, pr.number);
+    pub fn post_review_comment(&self, pr: &PrInfo, comment: &ReviewComment) -> Result<String> {
+        let url = format!("{}/comments", pr_url(&pr.owner, &pr.repo, pr.number));
         let body = comment.to_json(&pr.head_sha);
         let value = self
             .post(&url, body)
@@ -146,6 +142,12 @@ fn pr_url(owner: &str, repo: &str, number: u64) -> String {
     format!("{API_ROOT}/repos/{owner}/{repo}/pulls/{number}")
 }
 
+/// The public (html) URL of a pull request. One definition, used by the API
+/// fallback and by the orchestrator's no-token path.
+pub fn pr_html_url(owner: &str, repo: &str, number: u64) -> String {
+    format!("https://github.com/{owner}/{repo}/pull/{number}")
+}
+
 /// Parse a PR API response into a [`PrInfo`].
 fn parse_pr(owner: &str, repo: &str, number: u64, v: &serde_json::Value) -> Result<PrInfo> {
     let str_at = |path: &[&str]| -> String {
@@ -171,7 +173,7 @@ fn parse_pr(owner: &str, repo: &str, number: u64, v: &serde_json::Value) -> Resu
         url: {
             let u = str_at(&["html_url"]);
             if u.is_empty() {
-                format!("https://github.com/{owner}/{repo}/pull/{number}")
+                pr_html_url(owner, repo, number)
             } else {
                 u
             }
@@ -192,7 +194,9 @@ fn map_ureq_error(e: ureq::Error) -> anyhow::Error {
 
 fn extract_github_message(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    v.get("message").and_then(|m| m.as_str()).map(|s| s.to_string())
+    v.get("message")
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string())
 }
 
 #[cfg(test)]

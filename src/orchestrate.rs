@@ -36,11 +36,7 @@ pub struct LayoutPlan {
 fn env_prefixed(session_dir: &str, argv: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(argv.len() + 2);
     out.push("env".to_string());
-    out.push(format!(
-        "{}={}",
-        crate::paths::SESSION_ENV,
-        session_dir
-    ));
+    out.push(format!("{}={}", crate::paths::SESSION_ENV, session_dir));
     out.extend(argv.iter().cloned());
     out
 }
@@ -112,7 +108,10 @@ pub fn start(args: &StartArgs) -> Result<()> {
     let (owner, repo, number) = resolve_pr_ref(&pr_arg, &git)?;
 
     // Choose the agent and render the prompt.
-    let agent_name = args.agent.clone().unwrap_or_else(|| cfg.default_agent.clone());
+    let agent_name = args
+        .agent
+        .clone()
+        .unwrap_or_else(|| cfg.default_agent.clone());
     let agent = cfg.agent(&agent_name).ok_or_else(|| {
         anyhow!(
             "unknown agent '{agent_name}'; known agents: {}",
@@ -120,12 +119,7 @@ pub fn start(args: &StartArgs) -> Result<()> {
         )
     })?;
 
-    let slug = format!(
-        "{}-{}-{}",
-        crate::util::slugify(&owner),
-        crate::util::slugify(&repo),
-        number
-    );
+    let slug = crate::model::pr_slug(&owner, &repo, number);
     let session_dir = crate::paths::session_dir(&slug)?;
     let worktree = crate::paths::worktree_path(&slug)?;
     let protocol_path = session_dir.join("CO_REVIEW.md");
@@ -156,7 +150,16 @@ pub fn start(args: &StartArgs) -> Result<()> {
     );
 
     if args.dry_run {
-        print_dry_run(&owner, &repo, number, &agent_name, &prompt, &plan, &session_dir, &git);
+        print_dry_run(
+            &owner,
+            &repo,
+            number,
+            &agent_name,
+            &prompt,
+            &plan,
+            &session_dir,
+            &git,
+        );
         return Ok(());
     }
 
@@ -215,15 +218,7 @@ fn resolve_prompt(args: &StartArgs, cfg: &Config) -> Result<String> {
         return Ok(p.clone());
     }
     if let Some(file) = &args.prompt_file {
-        let text = if file == "-" {
-            use std::io::Read;
-            let mut s = String::new();
-            std::io::stdin().read_to_string(&mut s)?;
-            s
-        } else {
-            std::fs::read_to_string(file).with_context(|| format!("reading prompt file {file}"))?
-        };
-        return Ok(text);
+        return crate::util::read_path_or_stdin(file);
     }
     Ok(cfg.prompt.clone())
 }
@@ -254,7 +249,7 @@ fn assemble_pr_info(git: &Git, owner: &str, repo: &str, number: u64) -> Result<P
         head_ref: git::pr_head_ref(number),
         base_sha,
         head_sha,
-        url: format!("https://github.com/{owner}/{repo}/pull/{number}"),
+        url: crate::github::pr_html_url(owner, repo, number),
     })
 }
 
@@ -346,7 +341,10 @@ fn print_dry_run(
     println!("session:   {}", session_dir.display());
     println!("worktree:  {}", plan.worktree);
     println!("\n## git (would run)");
-    println!("git fetch --no-tags origin {}", git::pr_head_refspec(number));
+    println!(
+        "git fetch --no-tags origin {}",
+        git::pr_head_refspec(number)
+    );
     println!(
         "git worktree add --detach --force {} <pr-head>",
         plan.worktree

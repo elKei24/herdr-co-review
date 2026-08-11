@@ -1,8 +1,6 @@
 //! Handlers for the agent- and human-facing subcommands (everything except
 //! `start`, which lives in [`crate::orchestrate`], and `view`, in [`crate::tui`]).
 
-use std::io::Read;
-
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::cli::*;
@@ -19,19 +17,10 @@ fn open_store(session: &SessionArgs) -> Result<Store> {
 
 /// Resolve the body text from `--body` / `--body-file` (`-` = stdin).
 fn resolve_text(inline: Option<&str>, file: Option<&str>) -> Result<Option<String>> {
-    if let Some(path) = file {
-        let text = if path == "-" {
-            let mut s = String::new();
-            std::io::stdin()
-                .read_to_string(&mut s)
-                .context("reading from stdin")?;
-            s
-        } else {
-            std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?
-        };
-        return Ok(Some(text));
+    match file {
+        Some(path) => Ok(Some(crate::util::read_path_or_stdin(path)?)),
+        None => Ok(inline.map(|s| s.to_string())),
     }
-    Ok(inline.map(|s| s.to_string()))
 }
 
 pub fn add_finding(args: &AddFindingArgs) -> Result<()> {
@@ -40,10 +29,11 @@ pub fn add_finding(args: &AddFindingArgs) -> Result<()> {
     let severity = Severity::parse(&args.severity)
         .ok_or_else(|| anyhow!("unknown severity '{}'", args.severity))?;
 
-    let mut locations = Vec::with_capacity(args.locations.len());
-    for raw in &args.locations {
-        locations.push(Location::parse(raw).map_err(|e| anyhow!("{e}"))?);
-    }
+    let locations = args
+        .locations
+        .iter()
+        .map(|raw| Location::parse(raw).map_err(|e| anyhow!("{e}")))
+        .collect::<Result<Vec<_>>>()?;
 
     let body = resolve_text(args.body.as_deref(), args.body_file.as_deref())?.unwrap_or_default();
 
@@ -167,23 +157,14 @@ pub fn mark_posted(args: &MarkPostedArgs) -> Result<()> {
 
 pub fn set_status(args: &SetStatusArgs) -> Result<()> {
     let store = open_store(&args.session)?;
-    let status = parse_status(&args.status)?;
+    let status = ReviewStatus::parse(&args.status)
+        .ok_or_else(|| anyhow!("unknown status '{}'", args.status))?;
     store.update(|state| {
         state.status = status;
         Ok(())
     })?;
     println!("status: {}", status.label());
     Ok(())
-}
-
-fn parse_status(s: &str) -> Result<ReviewStatus> {
-    match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-        "reviewing" | "review" => Ok(ReviewStatus::Reviewing),
-        "awaiting_review" | "awaiting" | "handoff" => Ok(ReviewStatus::AwaitingReview),
-        "posting" => Ok(ReviewStatus::Posting),
-        "done" | "complete" | "finished" => Ok(ReviewStatus::Done),
-        other => Err(anyhow!("unknown status '{other}'")),
-    }
 }
 
 pub fn list(args: &ListArgs) -> Result<()> {
@@ -245,18 +226,11 @@ pub fn status(args: &SessionArgs) -> Result<()> {
     let store = open_store(args)?;
     let state = store.read()?;
     print_header(&state);
-    let approved = state
-        .findings
-        .iter()
-        .filter(|f| matches!(f.verdict, Verdict::Approved | Verdict::Edited))
-        .count();
-    let dismissed = state
-        .findings
-        .iter()
-        .filter(|f| f.verdict == Verdict::Dismissed)
-        .count();
-    let posted = state.findings.iter().filter(|f| f.posted).count();
-    println!("  approved/edited: {approved}   dismissed: {dismissed}   posted: {posted}");
+    let c = state.counts();
+    println!(
+        "  approved/edited: {}   dismissed: {}   posted: {}",
+        c.approved, c.dismissed, c.posted
+    );
     println!("  worktree: {}", state.session.worktree);
     println!("  session:  {}", store.session_dir().display());
     Ok(())
@@ -297,17 +271,9 @@ pub fn show(args: &ShowArgs) -> Result<()> {
 
     // Related code (best-effort; skip silently if git isn't usable here).
     if let Ok(git) = Git::discover(std::path::Path::new(&state.session.worktree)) {
-        let worktree = std::path::Path::new(&state.session.worktree);
         println!();
         for loc in &finding.locations {
-            match diffview::snippet_for_location(
-                &git,
-                worktree,
-                &state.pr.base_sha,
-                &state.pr.head_sha,
-                loc,
-                diffview::DEFAULT_CONTEXT,
-            ) {
+            match diffview::snippet_for(&git, &state, loc, diffview::DEFAULT_CONTEXT) {
                 Ok(snippet) => print!("{}", diffview::render_plain(&snippet)),
                 Err(e) => println!("── {} ── (could not render: {e})", loc.label()),
             }
@@ -526,16 +492,6 @@ pub fn prompt() -> Result<()> {
 mod tests {
     use super::*;
     use crate::model::{Finding, Severity, Verdict};
-
-    #[test]
-    fn status_parsing() {
-        assert_eq!(parse_status("done").unwrap(), ReviewStatus::Done);
-        assert_eq!(
-            parse_status("awaiting-review").unwrap(),
-            ReviewStatus::AwaitingReview
-        );
-        assert!(parse_status("nope").is_err());
-    }
 
     #[test]
     fn comment_body_includes_title_and_suggestion() {

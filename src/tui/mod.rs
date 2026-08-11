@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use crossterm::execute;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -55,12 +55,18 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
 
 fn run_loop(terminal: &mut Tui, app: &mut App) -> Result<()> {
     loop {
-        terminal.draw(|f| ui::draw(f, app))?;
+        // Only repaint when something changed, so an idle session doesn't redraw
+        // several times a second.
+        if app.dirty {
+            terminal.draw(|f| ui::draw(f, app))?;
+            app.dirty = false;
+        }
 
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Release {
                     handle_key(app, key);
+                    app.dirty = true;
                 }
             }
         }
@@ -200,7 +206,10 @@ mod tests {
         let text = buffer_text(&term);
         assert!(text.contains("#7"), "header PR number missing:\n{text}");
         assert!(text.contains("Add pagination"), "PR title missing");
-        assert!(text.contains("Off-by-one in slicing"), "finding title missing");
+        assert!(
+            text.contains("Off-by-one in slicing"),
+            "finding title missing"
+        );
         assert!(text.contains("HIGH"), "severity missing");
         assert!(text.contains("pending"), "verdict badge missing");
     }
@@ -324,6 +333,9 @@ mod tests {
         let mut term = Terminal::new(backend).unwrap();
         term.draw(|f| ui::draw(f, &app)).unwrap();
         let text = buffer_text(&term);
-        assert!(text.contains("waiting for the agent"), "waiting msg missing:\n{text}");
+        assert!(
+            text.contains("waiting for the agent"),
+            "waiting msg missing:\n{text}"
+        );
     }
 }

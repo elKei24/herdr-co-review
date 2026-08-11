@@ -22,6 +22,17 @@ pub enum LineKind {
     Removed,
 }
 
+impl LineKind {
+    /// The diff sign character for this kind of line.
+    pub fn sign(self) -> char {
+        match self {
+            LineKind::Added => '+',
+            LineKind::Removed => '-',
+            LineKind::Context => ' ',
+        }
+    }
+}
+
 /// One line of parsed unified diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffLine {
@@ -149,6 +160,25 @@ fn parse_hunk_header(header: &str) -> Option<(u32, u32)> {
     Some((old_start?, new_start?))
 }
 
+/// Build the related-code snippet for a location, pulling the worktree and base/
+/// head shas from the session state. This is the convenience both the CLI
+/// (`show`) and the TUI use so neither has to thread those fields itself.
+pub fn snippet_for(
+    git: &Git,
+    state: &crate::model::State,
+    loc: &Location,
+    context: u32,
+) -> Result<CodeSnippet> {
+    snippet_for_location(
+        git,
+        Path::new(&state.session.worktree),
+        &state.pr.base_sha,
+        &state.pr.head_sha,
+        loc,
+        context,
+    )
+}
+
 /// Build the related-code snippet for a location.
 pub fn snippet_for_location(
     git: &Git,
@@ -179,7 +209,9 @@ fn head_snippet(
 
     // Prefer the diff hunk when the location is part of the change.
     if !base_sha.is_empty() && !head_sha.is_empty() {
-        let diff = git.diff_file(base_sha, head_sha, &loc.file).unwrap_or_default();
+        let diff = git
+            .diff_file(base_sha, head_sha, &loc.file)
+            .unwrap_or_default();
         let parsed = parse_unified_diff(&diff);
         let windowed = window_diff(&parsed, win_lo, win_hi, start, end);
         if !windowed.is_empty() {
@@ -237,7 +269,13 @@ fn base_snippet(git: &Git, base_sha: &str, loc: &Location, context: u32) -> Resu
 
 /// Select diff lines whose new-line number falls in `[lo, hi]`, keeping removed
 /// lines that sit next to the kept region so the change reads naturally.
-fn window_diff(parsed: &[DiffLine], lo: u32, hi: u32, focus_lo: u32, focus_hi: u32) -> Vec<CodeLine> {
+fn window_diff(
+    parsed: &[DiffLine],
+    lo: u32,
+    hi: u32,
+    focus_lo: u32,
+    focus_hi: u32,
+) -> Vec<CodeLine> {
     let mut out = Vec::new();
     let mut last_new: u32 = 0;
     for dl in parsed {
@@ -292,22 +330,18 @@ fn plain_window(content: &str, lo: u32, hi: u32, focus_lo: u32, focus_hi: u32) -
 /// Render a snippet as plain text (used by `co-review show`).
 pub fn render_plain(snippet: &CodeSnippet) -> String {
     let mut out = String::new();
-    let tag = match snippet.side {
-        Side::Head => "head",
-        Side::Base => "base",
-    };
     let src = if snippet.from_diff { "diff" } else { "context" };
-    out.push_str(&format!("── {} ({tag}, {src}) ──\n", snippet.file));
+    out.push_str(&format!(
+        "── {} ({}, {src}) ──\n",
+        snippet.file,
+        snippet.side.label()
+    ));
     if let Some(note) = &snippet.note {
         out.push_str(&format!("   ({note})\n"));
         return out;
     }
     for line in &snippet.lines {
-        let sign = match line.kind {
-            LineKind::Added => '+',
-            LineKind::Removed => '-',
-            LineKind::Context => ' ',
-        };
+        let sign = line.kind.sign();
         let num = line
             .number
             .map(|n| format!("{n:>5}"))
@@ -356,7 +390,11 @@ index 111..222 100644
         assert_eq!(lines[3].kind, LineKind::Added);
         assert_eq!(lines[3].new, Some(3));
         // the trailing context line numbers continue
-        let last_ctx = lines.iter().rev().find(|l| l.kind == LineKind::Context).unwrap();
+        let last_ctx = lines
+            .iter()
+            .rev()
+            .find(|l| l.kind == LineKind::Context)
+            .unwrap();
         assert_eq!(last_ctx.new, Some(5));
     }
 
@@ -377,7 +415,9 @@ index 111..222 100644
         // focus on new line 2..3 (the added lines), context 6
         let win = window_diff(&parsed, 1, 9, 2, 3);
         // The removed `let x = 1;` should appear adjacent to the window.
-        assert!(win.iter().any(|l| l.kind == LineKind::Removed && l.text.contains("let x = 1")));
+        assert!(win
+            .iter()
+            .any(|l| l.kind == LineKind::Removed && l.text.contains("let x = 1")));
         // Added line 2 is focused.
         let added2 = win.iter().find(|l| l.number == Some(2)).unwrap();
         assert_eq!(added2.kind, LineKind::Added);
@@ -406,8 +446,18 @@ index 111..222 100644
             from_diff: true,
             note: None,
             lines: vec![
-                CodeLine { number: Some(1), kind: LineKind::Context, focus: false, text: "a".into() },
-                CodeLine { number: Some(2), kind: LineKind::Added, focus: true, text: "b".into() },
+                CodeLine {
+                    number: Some(1),
+                    kind: LineKind::Context,
+                    focus: false,
+                    text: "a".into(),
+                },
+                CodeLine {
+                    number: Some(2),
+                    kind: LineKind::Added,
+                    focus: true,
+                    text: "b".into(),
+                },
             ],
         };
         let text = render_plain(&snippet);

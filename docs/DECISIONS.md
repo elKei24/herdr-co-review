@@ -151,3 +151,32 @@ cross-compiled binaries via `@semantic-release/github`. Renovate keeps Cargo,
 GitHub-Actions, and npm (release tooling) dependencies current. This gives
 cross-language parity with the user's existing repo conventions while remaining
 idiomatic for a Rust project.
+
+## 10. Pane sizing is left to Herdr
+
+An earlier draft had an `agent_pane_ratio` config knob, but the `herdr pane
+split` CLI takes no ratio, and we can't verify a resize verb from here, so the
+field did nothing. Rather than ship a config option that silently has no effect,
+we removed it: the split is created 50/50 and the user resizes with Herdr's own
+mouse/keys. Only worktree checkouts are supported (the unused `clone` mode was
+removed for the same reason). If a reliable Herdr resize API is confirmed later,
+the ratio can come back wired to it.
+
+## 11. Quality-pass outcomes (code-review + simplify)
+
+The build was reviewed by an adversarial `/code-review` pass and a 4-angle
+`/simplify` pass. Notable fixes that shaped the code:
+
+- **Diff base**: the related-code view diffs the *merge-base* (three-dot
+  `base...head`) so it matches GitHub's diff even when the base branch advanced
+  after the PR branched — a two-dot range would fold in unrelated base changes.
+- **Live-reload correctness**: state carries a monotonic `rev` bumped on every
+  write; the navigator reloads on `rev` change rather than file mtime, so two
+  rapid agent writes are never coalesced into a missed update.
+- **One source of truth**: finding tallies (`State::counts`), the session slug
+  (`model::pr_slug`), status parsing (`ReviewStatus::parse`), the file-or-stdin
+  reader (`util::read_path_or_stdin`), and the `Side`/`LineKind` label/sign
+  helpers are each defined once and reused by the CLI and TUI.
+- **TUI efficiency**: related-code blocks are memoized per finding id (git diff
+  runs at most once per finding), and the event loop repaints only when a
+  `dirty` flag is set instead of several times a second while idle.

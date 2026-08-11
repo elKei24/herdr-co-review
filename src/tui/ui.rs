@@ -16,10 +16,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),                  // header
-            Constraint::Percentage(34),             // list
-            Constraint::Min(6),                     // detail
-            Constraint::Length(footer_h),           // footer / input
+            Constraint::Length(3),        // header
+            Constraint::Percentage(34),   // list
+            Constraint::Min(6),           // detail
+            Constraint::Length(footer_h), // footer / input
         ])
         .split(size);
 
@@ -39,39 +39,53 @@ pub fn draw(f: &mut Frame, app: &App) {
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let s = &app.state;
-    let approved = s
-        .findings
-        .iter()
-        .filter(|x| matches!(x.verdict, Verdict::Approved | Verdict::Edited))
-        .count();
-    let dismissed = s
-        .findings
-        .iter()
-        .filter(|x| x.verdict == Verdict::Dismissed)
-        .count();
-    let posted = s.findings.iter().filter(|x| x.posted).count();
+    let c = s.counts();
 
     let title = if s.pr.title.is_empty() {
         format!("{}/{} #{}", s.pr.owner, s.pr.repo, s.pr.number)
     } else {
-        format!("{}/{} #{} — {}", s.pr.owner, s.pr.repo, s.pr.number, s.pr.title)
+        format!(
+            "{}/{} #{} — {}",
+            s.pr.owner, s.pr.repo, s.pr.number, s.pr.title
+        )
     };
 
     let line2 = Line::from(vec![
         Span::styled(
             format!(" {} ", s.status.label()),
-            Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!("  {} findings", s.findings.len())),
-        Span::styled(format!("  {} pending", s.pending_count()), Style::default().fg(Color::Gray)),
-        Span::styled(format!("  {approved} approved"), Style::default().fg(Color::Green)),
-        Span::styled(format!("  {dismissed} dismissed"), Style::default().fg(Color::Red)),
-        Span::styled(format!("  {posted} posted"), Style::default().fg(Color::Cyan)),
+        Span::raw(format!("  {} findings", c.total)),
+        Span::styled(
+            format!("  {} pending", c.pending),
+            Style::default().fg(Color::Gray),
+        ),
+        Span::styled(
+            format!("  {} approved", c.approved),
+            Style::default().fg(Color::Green),
+        ),
+        Span::styled(
+            format!("  {} dismissed", c.dismissed),
+            Style::default().fg(Color::Red),
+        ),
+        Span::styled(
+            format!("  {} posted", c.posted),
+            Style::default().fg(Color::Cyan),
+        ),
     ]);
 
     let block = Block::default().borders(Borders::ALL).title(" co-review ");
-    let para = Paragraph::new(vec![Line::from(Span::styled(title, Style::default().add_modifier(Modifier::BOLD))), line2])
-        .block(block);
+    let para = Paragraph::new(vec![
+        Line::from(Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        line2,
+    ])
+    .block(block);
     f.render_widget(para, area);
 }
 
@@ -79,7 +93,9 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = if app.state.findings.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "  waiting for the agent's findings…",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )))]
     } else {
         app.state
@@ -143,7 +159,9 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(
                 fd.severity.label().to_uppercase(),
-                Style::default().fg(severity_color(fd.severity)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(severity_color(fd.severity))
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
             verdict_badge(fd.verdict),
@@ -175,7 +193,9 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "suggestion:",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             )));
             for sl in sug.lines() {
                 lines.push(Line::from(Span::styled(
@@ -187,17 +207,24 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         if let Some(note) = &fd.user_note {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("your note: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "your note: ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(note.clone(), Style::default().fg(Color::Yellow)),
             ]));
         }
 
         // Related code blocks.
-        for block in &app.code_blocks {
+        for block in app.code_blocks() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 format!("── {} ──", block.header),
-                Style::default().fg(Color::Rgb(130, 170, 255)).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Rgb(130, 170, 255))
+                    .add_modifier(Modifier::BOLD),
             )));
             lines.extend(block.lines.iter().cloned());
         }
@@ -253,7 +280,10 @@ fn draw_help(f: &mut Frame, size: Rect) {
     let area = centered_rect(70, 70, size);
     f.render_widget(Clear, area);
     let help = vec![
-        Line::from(Span::styled("co-review navigator", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            "co-review navigator",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("Navigation"),
         Line::from("  j / k / ↓ / ↑     move between findings"),
@@ -284,7 +314,10 @@ fn draw_help(f: &mut Frame, size: Rect) {
     ];
     let block = Block::default().borders(Borders::ALL).title(" help ");
     f.render_widget(
-        Paragraph::new(help).block(block).alignment(Alignment::Left).wrap(Wrap { trim: false }),
+        Paragraph::new(help)
+            .block(block)
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: false }),
         area,
     );
 }

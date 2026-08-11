@@ -92,8 +92,9 @@ impl Herdr {
                 first_pane: "w1:p1".into(),
             });
         }
-        let first_pane = parse_pane_id(&out)
-            .ok_or_else(|| anyhow!("could not parse a pane id from `herdr workspace create` output: {out:?}"))?;
+        let first_pane = parse_pane_id(&out).ok_or_else(|| {
+            anyhow!("could not parse a pane id from `herdr workspace create` output: {out:?}")
+        })?;
         let id = workspace_of(&first_pane);
         Ok(Workspace { id, first_pane })
     }
@@ -105,8 +106,9 @@ impl Herdr {
         if self.dry_run {
             return Ok(bump_pane(pane));
         }
-        parse_pane_id(&out)
-            .ok_or_else(|| anyhow!("could not parse a pane id from `herdr pane split` output: {out:?}"))
+        parse_pane_id(&out).ok_or_else(|| {
+            anyhow!("could not parse a pane id from `herdr pane split` output: {out:?}")
+        })
     }
 
     /// Run a command (given as argv) inside a pane.
@@ -125,7 +127,8 @@ impl Herdr {
             pane.to_string(),
             text.to_string(),
         ];
-        self.run_capture(&args).context("herdr pane send-text failed")?;
+        self.run_capture(&args)
+            .context("herdr pane send-text failed")?;
         Ok(())
     }
 
@@ -133,7 +136,8 @@ impl Herdr {
     pub fn pane_send_keys(&self, pane: &str, keys: &[&str]) -> Result<()> {
         let mut args = vec!["pane".into(), "send-keys".into(), pane.to_string()];
         args.extend(keys.iter().map(|k| k.to_string()));
-        self.run_capture(&args).context("herdr pane send-keys failed")?;
+        self.run_capture(&args)
+            .context("herdr pane send-keys failed")?;
         Ok(())
     }
 
@@ -207,9 +211,9 @@ pub fn shell_join(argv: &[String]) -> String {
 /// Single-quote a shell argument, escaping embedded single quotes.
 pub fn shell_quote(arg: &str) -> String {
     if !arg.is_empty()
-        && arg
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '=' | '@' | ','))
+        && arg.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '=' | '@' | ',')
+        })
     {
         return arg.to_string();
     }
@@ -300,11 +304,25 @@ mod tests {
     fn arg_builders() {
         assert_eq!(
             build_workspace_create_args("/tmp/wt", "co-review-1"),
-            vec!["workspace", "create", "--cwd", "/tmp/wt", "--label", "co-review-1"]
+            vec![
+                "workspace",
+                "create",
+                "--cwd",
+                "/tmp/wt",
+                "--label",
+                "co-review-1"
+            ]
         );
         assert_eq!(
             build_pane_split_args("w1:p1", Direction::Right, false),
-            vec!["pane", "split", "w1:p1", "--direction", "right", "--no-focus"]
+            vec![
+                "pane",
+                "split",
+                "w1:p1",
+                "--direction",
+                "right",
+                "--no-focus"
+            ]
         );
         assert_eq!(
             build_pane_run_args("w1:p2", "co-review view"),
@@ -320,10 +338,13 @@ mod tests {
         };
         let ws = h.workspace_create("/tmp", "x").unwrap();
         assert_eq!(ws.first_pane, "w1:p1");
-        let p2 = h.pane_split(&ws.first_pane, Direction::Right, false).unwrap();
+        let p2 = h
+            .pane_split(&ws.first_pane, Direction::Right, false)
+            .unwrap();
         assert_eq!(p2, "w1:p2");
         // these are no-ops in dry-run and must not error
-        h.pane_run(&p2, &["co-review".into(), "view".into()]).unwrap();
+        h.pane_run(&p2, &["co-review".into(), "view".into()])
+            .unwrap();
         h.pane_submit_line(&ws.first_pane, "hello").unwrap();
     }
 }

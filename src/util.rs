@@ -49,6 +49,21 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Read text from a path, or from stdin when the path is `-`. Shared by the
+/// `--body-file` and `--prompt-file` options.
+pub fn read_path_or_stdin(path: &str) -> Result<String> {
+    use std::io::Read;
+    if path == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .context("reading from stdin")?;
+        Ok(s)
+    } else {
+        fs::read_to_string(path).with_context(|| format!("reading {path}"))
+    }
+}
+
 /// Turn an arbitrary string into a filesystem-safe slug (lowercase ascii,
 /// alphanumerics and `-`). Collapses runs of other characters into a single `-`.
 pub fn slugify(input: &str) -> String {

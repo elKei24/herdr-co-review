@@ -1,6 +1,7 @@
 //! State and behavior of the navigator TUI.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -10,7 +11,7 @@ use ratatui::text::{Line, Span};
 use crate::diffview::{self, CodeSnippet, LineKind};
 use crate::git::Git;
 use crate::herdr::Herdr;
-use crate::model::{ChatEntry, State, Verdict};
+use crate::model::{ChatEntry, Location, State, Verdict};
 use crate::store::Store;
 use crate::tui::syntax::Highlighter;
 
@@ -35,12 +36,10 @@ pub struct App {
     last_rev: u64,
 
     git: Option<Git>,
-    worktree: PathBuf,
     herdr: Herdr,
     highlighter: Highlighter,
 
     pub selected: usize,
-    selected_id: Option<String>,
     pub detail_scroll: u16,
 
     pub input: Option<Input>,
@@ -48,38 +47,39 @@ pub struct App {
     status_msg: Option<(String, Instant)>,
     pub show_help: bool,
     pub should_quit: bool,
+    /// Set whenever something visible changed; the event loop only repaints when
+    /// this is set, so an idle session doesn't redraw several times a second.
+    pub dirty: bool,
 
-    cached_for: Option<String>,
-    pub code_blocks: Vec<CodeBlock>,
+    /// Highlighted related-code blocks, memoized per finding id so navigating the
+    /// list re-runs the (subprocess-backed) git diff at most once per finding.
+    code_cache: HashMap<String, Vec<CodeBlock>>,
 }
 
 impl App {
     pub fn new(store: Store) -> Result<Self> {
         let state = store.read()?;
-        let worktree = PathBuf::from(&state.session.worktree);
-        let git = Git::discover(&worktree).ok();
+        let git = Git::discover(Path::new(&state.session.worktree)).ok();
         let last_rev = state.rev;
         let mut app = App {
             store,
             state,
             last_rev,
             git,
-            worktree,
             herdr: Herdr::new(false),
             highlighter: Highlighter::new(),
             selected: 0,
-            selected_id: None,
             detail_scroll: 0,
             input: None,
             input_buffer: String::new(),
             status_msg: None,
             show_help: false,
             should_quit: false,
-            cached_for: None,
-            code_blocks: Vec::new(),
+            dirty: true,
+            code_cache: HashMap::new(),
         };
-        app.sync_selection();
-        app.refresh_code();
+        app.reconcile_selection(None);
+        app.ensure_code();
         Ok(app)
     }
 
@@ -94,6 +94,7 @@ impl App {
 
     fn set_status(&mut self, msg: impl Into<String>) {
         self.status_msg = Some((msg.into(), Instant::now()));
+        self.dirty = true;
     }
 
     /// Expire a transient status message after a few seconds.
@@ -101,41 +102,47 @@ impl App {
         if let Some((_, at)) = &self.status_msg {
             if at.elapsed() > Duration::from_secs(4) {
                 self.status_msg = None;
+                self.dirty = true;
             }
         }
     }
 
-    /// Reload state from disk if its revision advanced, preserving the selected
-    /// finding by id. Reads on every tick (cheap for a small JSON) and compares
-    /// the monotonic `rev`, so no change is ever missed to mtime granularity.
+    /// Reload from disk if the revision advanced. Reads a small JSON each tick
+    /// and compares the monotonic `rev`, so no change is missed to mtime
+    /// granularity.
     pub fn poll_reload(&mut self) {
         if let Ok(state) = self.store.read_lossy() {
             if state.rev != self.last_rev {
                 self.last_rev = state.rev;
-                self.state = state;
-                self.sync_selection();
-                self.cached_for = None; // rebuild code against possibly-new shas/locations
-                self.refresh_code();
+                self.apply_state(state);
             }
         }
     }
 
-    /// Keep `selected`/`selected_id` consistent after list changes.
-    fn sync_selection(&mut self) {
+    /// Adopt a freshly-read state, keeping the same finding selected by id and
+    /// invalidating the code cache (shas/locations may have changed).
+    fn apply_state(&mut self, new_state: State) {
+        let prev = self.selected_id();
+        self.state = new_state;
+        self.reconcile_selection(prev.as_deref());
+        self.code_cache.clear();
+        self.ensure_code();
+        self.dirty = true;
+    }
+
+    /// Clamp/restore the selection index after the findings list changed.
+    fn reconcile_selection(&mut self, prev_id: Option<&str>) {
         if self.state.findings.is_empty() {
             self.selected = 0;
-            self.selected_id = None;
             return;
         }
-        // Try to keep the same finding selected across reloads.
-        if let Some(id) = &self.selected_id {
-            if let Some(pos) = self.state.findings.iter().position(|f| &f.id == id) {
+        if let Some(id) = prev_id {
+            if let Some(pos) = self.state.findings.iter().position(|f| f.id == id) {
                 self.selected = pos;
                 return;
             }
         }
         self.selected = self.selected.min(self.state.findings.len() - 1);
-        self.selected_id = self.selected_id();
     }
 
     pub fn select_next(&mut self) {
@@ -165,8 +172,8 @@ impl App {
 
     fn after_move(&mut self) {
         self.detail_scroll = 0;
-        self.selected_id = self.selected_id();
-        self.refresh_code();
+        self.ensure_code();
+        self.dirty = true;
     }
 
     pub fn scroll_detail_down(&mut self) {
@@ -275,31 +282,38 @@ impl App {
             Ok(())
         });
         let message = format!("[co-review {finding_id}] {text}");
-        match &self.state.session.agent_pane_id {
-            Some(pane) if self.herdr.available() => match self.herdr.pane_submit_line(pane, &message) {
-                Ok(()) => self.set_status(format!("sent to agent about {finding_id}")),
-                Err(e) => self.set_status(format!("couldn't reach agent pane: {e}")),
-            },
-            _ => self.set_status(format!("recorded (no agent pane wired); re: {finding_id}")),
+        match self.deliver_to_agent(&message) {
+            Ok(true) => self.set_status(format!("sent to agent about {finding_id}")),
+            Ok(false) => {
+                self.set_status(format!("recorded (no agent pane wired); re: {finding_id}"))
+            }
+            Err(e) => self.set_status(format!("couldn't reach agent pane: {e}")),
         }
     }
 
     /// Nudge the agent to post the approved findings.
     pub fn nudge_post(&mut self) {
-        let pending = self.state.pending_count();
-        let msg = if pending == 0 {
+        let msg = if self.state.pending_count() == 0 {
             "All findings are decided — please post the approved ones to GitHub and mark them posted."
         } else {
             "Please post the findings I've already approved; I'll keep triaging the rest."
         };
+        match self.deliver_to_agent(msg) {
+            Ok(true) => self.set_status("asked the agent to post approved findings"),
+            Ok(false) => self.set_status("no agent pane wired; run `co-review post` yourself"),
+            Err(e) => self.set_status(format!("couldn't reach agent pane: {e}")),
+        }
+    }
+
+    /// Submit a line to the agent's pane. `Ok(true)` delivered, `Ok(false)` when
+    /// there is no agent pane wired (or no Herdr), `Err` on a delivery failure.
+    fn deliver_to_agent(&self, text: &str) -> Result<bool> {
         match &self.state.session.agent_pane_id {
             Some(pane) if self.herdr.available() => {
-                match self.herdr.pane_submit_line(pane, msg) {
-                    Ok(()) => self.set_status("asked the agent to post approved findings"),
-                    Err(e) => self.set_status(format!("couldn't reach agent pane: {e}")),
-                }
+                self.herdr.pane_submit_line(pane, text)?;
+                Ok(true)
             }
-            _ => self.set_status("no agent pane wired; run `co-review post` yourself"),
+            _ => Ok(false),
         }
     }
 
@@ -312,68 +326,68 @@ impl App {
     fn reload_now(&mut self) {
         if let Ok(state) = self.store.read_lossy() {
             self.last_rev = state.rev;
-            self.state = state;
-            self.sync_selection();
-            self.cached_for = None;
-            self.refresh_code();
+            self.apply_state(state);
         }
     }
 
-    /// Rebuild the cached, highlighted related-code blocks for the selection.
-    fn refresh_code(&mut self) {
-        let Some(finding) = self.state.findings.get(self.selected) else {
-            self.code_blocks.clear();
-            self.cached_for = None;
+    /// The related-code blocks for the current selection (memoized).
+    pub fn code_blocks(&self) -> &[CodeBlock] {
+        self.state
+            .findings
+            .get(self.selected)
+            .and_then(|f| self.code_cache.get(&f.id))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Ensure the code blocks for the current selection are built and cached.
+    fn ensure_code(&mut self) {
+        let Some((id, locations)) = self
+            .state
+            .findings
+            .get(self.selected)
+            .map(|f| (f.id.clone(), f.locations.clone()))
+        else {
             return;
         };
-        if self.cached_for.as_deref() == Some(finding.id.as_str()) {
+        if self.code_cache.contains_key(&id) {
             return;
         }
-        self.cached_for = Some(finding.id.clone());
-        self.code_blocks.clear();
+        let blocks = self.build_blocks(&locations);
+        self.code_cache.insert(id, blocks);
+    }
 
+    fn build_blocks(&self, locations: &[Location]) -> Vec<CodeBlock> {
         let Some(git) = &self.git else {
-            for loc in &finding.locations {
-                self.code_blocks.push(CodeBlock {
+            return locations
+                .iter()
+                .map(|loc| CodeBlock {
                     header: loc.label(),
                     lines: vec![Line::from("(no git checkout available to show code)")],
-                });
-            }
-            return;
+                })
+                .collect();
         };
-
-        let mut blocks = Vec::new();
-        for loc in &finding.locations {
-            let block = match diffview::snippet_for_location(
-                git,
-                &self.worktree,
-                &self.state.pr.base_sha,
-                &self.state.pr.head_sha,
-                loc,
-                diffview::DEFAULT_CONTEXT,
-            ) {
-                Ok(snippet) => CodeBlock {
-                    header: snippet_header(&snippet),
-                    lines: render_snippet(&self.highlighter, &snippet),
-                },
-                Err(e) => CodeBlock {
-                    header: loc.label(),
-                    lines: vec![Line::from(format!("(could not render: {e})"))],
-                },
-            };
-            blocks.push(block);
-        }
-        self.code_blocks = blocks;
+        locations
+            .iter()
+            .map(|loc| {
+                match diffview::snippet_for(git, &self.state, loc, diffview::DEFAULT_CONTEXT) {
+                    Ok(snippet) => CodeBlock {
+                        header: snippet_header(&snippet),
+                        lines: render_snippet(&self.highlighter, &snippet),
+                    },
+                    Err(e) => CodeBlock {
+                        header: loc.label(),
+                        lines: vec![Line::from(format!("(could not render: {e})"))],
+                    },
+                }
+            })
+            .collect()
     }
 }
 
 fn snippet_header(snippet: &CodeSnippet) -> String {
-    let side = match snippet.side {
-        crate::model::Side::Head => "head",
-        crate::model::Side::Base => "base",
-    };
     let src = if snippet.from_diff { "diff" } else { "context" };
-    format!("{} · {side} · {src}", snippet.file)
+    format!("{} · {} · {src}", snippet.file, snippet.side.label())
 }
 
 /// Colors for the code view.
@@ -402,11 +416,7 @@ fn render_snippet(hl: &Highlighter, snippet: &CodeSnippet) -> Vec<Line<'static>>
             (LineKind::Context, true) => Some(FOCUS_BG),
             (LineKind::Context, false) => None,
         };
-        let sign = match line.kind {
-            LineKind::Added => '+',
-            LineKind::Removed => '-',
-            LineKind::Context => ' ',
-        };
+        let sign = line.kind.sign();
         let marker = if line.focus { '▶' } else { ' ' };
         let num = line
             .number
@@ -416,11 +426,7 @@ fn render_snippet(hl: &Highlighter, snippet: &CodeSnippet) -> Vec<Line<'static>>
 
         let mut spans: Vec<Span<'static>> = Vec::new();
         let gutter_style = {
-            let mut s = Style::default().fg(if line.focus {
-                Color::Yellow
-            } else {
-                GUTTER_FG
-            });
+            let mut s = Style::default().fg(if line.focus { Color::Yellow } else { GUTTER_FG });
             if let Some(bg) = bg {
                 s = s.bg(bg);
             }

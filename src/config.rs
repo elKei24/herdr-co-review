@@ -18,26 +18,12 @@ pub const PROMPT_TOKEN: &str = "{prompt}";
 pub struct Config {
     /// Name of the agent to use when `--agent` is not given.
     pub default_agent: String,
-    /// Fraction of the workspace width given to the agent (left) pane. The
-    /// navigator gets the rest. `0.6` means 60% agent / 40% navigator.
-    pub agent_pane_ratio: f32,
-    /// How to create the review checkout: a shared `git worktree` (fast, default)
-    /// or a fresh `clone`.
-    pub checkout_mode: CheckoutMode,
     /// Named agent definitions. Always contains at least `claude`, `codex`,
     /// `gemini`, and `cursor` unless the user overrides them.
     pub agents: BTreeMap<String, AgentConfig>,
     /// The prompt handed to the agent. `{pr}` is replaced with the PR reference
     /// (e.g. `#123`) and `{protocol}` with the path to the protocol file.
     pub prompt: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CheckoutMode {
-    #[default]
-    Worktree,
-    Clone,
 }
 
 /// How to launch a particular agent.
@@ -88,8 +74,6 @@ impl Default for Config {
         }
         Config {
             default_agent: "claude".to_string(),
-            agent_pane_ratio: 0.6,
-            checkout_mode: CheckoutMode::Worktree,
             agents,
             prompt: crate::protocol::DEFAULT_PROMPT.to_string(),
         }
@@ -125,12 +109,6 @@ impl Config {
     pub fn agent(&self, name: &str) -> Option<&AgentConfig> {
         self.agents.get(name)
     }
-
-    /// Clamp the pane ratio into a usable range so a bad config can't produce a
-    /// zero-width pane.
-    pub fn clamped_ratio(&self) -> f32 {
-        self.agent_pane_ratio.clamp(0.2, 0.8)
-    }
 }
 
 #[cfg(test)]
@@ -160,10 +138,7 @@ mod tests {
             kind: None,
             command: vec!["myagent".into(), "--task".into(), "{prompt}".into()],
         };
-        assert_eq!(
-            a.build_command("do it"),
-            vec!["myagent", "--task", "do it"]
-        );
+        assert_eq!(a.build_command("do it"), vec!["myagent", "--task", "do it"]);
     }
 
     #[test]
@@ -184,19 +159,5 @@ command = ["mytool", "run"]
         assert!(cfg.agent("mytool").is_some());
         // built-in still present
         assert!(cfg.agent("claude").is_some());
-    }
-
-    #[test]
-    fn ratio_is_clamped() {
-        let wide = Config {
-            agent_pane_ratio: 0.95,
-            ..Default::default()
-        };
-        assert!((wide.clamped_ratio() - 0.8).abs() < f32::EPSILON);
-        let narrow = Config {
-            agent_pane_ratio: 0.01,
-            ..Default::default()
-        };
-        assert!((narrow.clamped_ratio() - 0.2).abs() < f32::EPSILON);
     }
 }

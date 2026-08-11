@@ -73,10 +73,29 @@ impl State {
 
     /// Number of findings still awaiting a human decision.
     pub fn pending_count(&self) -> usize {
-        self.findings
-            .iter()
-            .filter(|f| f.verdict == Verdict::Pending)
-            .count()
+        self.counts().pending
+    }
+
+    /// Tally findings by verdict/posted state in a single pass. Both the CLI and
+    /// the TUI headers render from this, so the grouping lives in exactly one
+    /// place.
+    pub fn counts(&self) -> Counts {
+        let mut c = Counts {
+            total: self.findings.len(),
+            ..Default::default()
+        };
+        for f in &self.findings {
+            match f.verdict {
+                Verdict::Pending => c.pending += 1,
+                Verdict::Approved | Verdict::Edited => c.approved += 1,
+                Verdict::Dismissed => c.dismissed += 1,
+                Verdict::NeedsDiscussion => c.needs_discussion += 1,
+            }
+            if f.posted {
+                c.posted += 1;
+            }
+        }
+        c
     }
 
     /// Whether the review is ready for the agent to proceed to posting: every
@@ -87,6 +106,30 @@ impl State {
         self.pending_count() == 0
             && (self.status != ReviewStatus::Reviewing || !self.findings.is_empty())
     }
+}
+
+/// A one-pass tally of findings by state, shared by the CLI and TUI headers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub total: usize,
+    pub pending: usize,
+    /// Approved or human-edited (i.e. will be posted).
+    pub approved: usize,
+    pub dismissed: usize,
+    pub needs_discussion: usize,
+    pub posted: usize,
+}
+
+/// The filesystem-safe session id for a PR (`owner-repo-number`). The session
+/// directory and worktree path both derive from this, so it has exactly one
+/// definition.
+pub fn pr_slug(owner: &str, repo: &str, number: u64) -> String {
+    format!(
+        "{}-{}-{}",
+        crate::util::slugify(owner),
+        crate::util::slugify(repo),
+        number
+    )
 }
 
 /// Metadata about the pull request under review.
@@ -115,12 +158,7 @@ pub struct PrInfo {
 
 impl PrInfo {
     pub fn slug(&self) -> String {
-        format!(
-            "{}-{}-{}",
-            crate::util::slugify(&self.owner),
-            crate::util::slugify(&self.repo),
-            self.number
-        )
+        pr_slug(&self.owner, &self.repo, self.number)
     }
 }
 
@@ -171,6 +209,17 @@ impl ReviewStatus {
             ReviewStatus::AwaitingReview => "awaiting review",
             ReviewStatus::Posting => "posting",
             ReviewStatus::Done => "done",
+        }
+    }
+
+    /// Parse leniently from user/agent input.
+    pub fn parse(s: &str) -> Option<ReviewStatus> {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "reviewing" | "review" => Some(ReviewStatus::Reviewing),
+            "awaiting_review" | "awaiting" | "handoff" => Some(ReviewStatus::AwaitingReview),
+            "posting" => Some(ReviewStatus::Posting),
+            "done" | "complete" | "finished" => Some(ReviewStatus::Done),
+            _ => None,
         }
     }
 }
@@ -308,7 +357,9 @@ impl Location {
     }
 
     pub fn end(&self) -> u32 {
-        self.end_line.unwrap_or(self.start_line).max(self.start_line)
+        self.end_line
+            .unwrap_or(self.start_line)
+            .max(self.start_line)
     }
 
     /// A compact `path:line` or `path:start-end` label.
@@ -331,6 +382,15 @@ pub enum Side {
     Head,
     /// The base/original version.
     Base,
+}
+
+impl Side {
+    pub fn label(self) -> &'static str {
+        match self {
+            Side::Head => "head",
+            Side::Base => "base",
+        }
+    }
 }
 
 /// Severity, ordered from most to least important.
@@ -562,6 +622,49 @@ mod tests {
             side: Side::Head,
         };
         assert_eq!(range.label(), "a.rs:5-9");
+    }
+
+    #[test]
+    fn counts_tally_in_one_pass() {
+        let mut s = State::new(sample_pr(), sample_session());
+        let mk = |id: &str, v: Verdict, posted: bool| {
+            let mut f = Finding::new(id.into(), "t".into());
+            f.verdict = v;
+            f.posted = posted;
+            f
+        };
+        s.findings = vec![
+            mk("f1", Verdict::Approved, true),
+            mk("f2", Verdict::Edited, false),
+            mk("f3", Verdict::Dismissed, false),
+            mk("f4", Verdict::Pending, false),
+            mk("f5", Verdict::NeedsDiscussion, false),
+        ];
+        let c = s.counts();
+        assert_eq!(c.total, 5);
+        assert_eq!(c.approved, 2); // approved + edited
+        assert_eq!(c.dismissed, 1);
+        assert_eq!(c.needs_discussion, 1);
+        assert_eq!(c.pending, 1);
+        assert_eq!(c.posted, 1);
+        assert_eq!(s.pending_count(), 1);
+    }
+
+    #[test]
+    fn slug_and_status_parse() {
+        assert_eq!(
+            pr_slug("elKei24", "Herdr-Co-Review", 7),
+            "elkei24-herdr-co-review-7"
+        );
+        assert_eq!(sample_pr().slug(), "elkei24-herdr-co-review-123");
+        assert_eq!(ReviewStatus::parse("done"), Some(ReviewStatus::Done));
+        assert_eq!(
+            ReviewStatus::parse("awaiting-review"),
+            Some(ReviewStatus::AwaitingReview)
+        );
+        assert_eq!(ReviewStatus::parse("nope"), None);
+        assert_eq!(Side::Head.label(), "head");
+        assert_eq!(Side::Base.label(), "base");
     }
 
     #[test]

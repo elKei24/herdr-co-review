@@ -79,8 +79,8 @@ impl Store {
 
     fn read_unlocked(&self) -> Result<State> {
         let path = self.state_path();
-        let bytes = fs::read(&path)
-            .with_context(|| format!("reading session state {}", path.display()))?;
+        let bytes =
+            fs::read(&path).with_context(|| format!("reading session state {}", path.display()))?;
         let state: State = serde_json::from_slice(&bytes)
             .with_context(|| format!("parsing session state {}", path.display()))?;
         Ok(state)
