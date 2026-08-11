@@ -1,0 +1,473 @@
+//! The shared data model: the persisted session `State` and everything in it.
+//!
+//! The whole point of `co-review` is that an agent and a human collaborate on
+//! the *same* set of findings. That shared truth lives in [`State`], which is
+//! serialized to `state.json` in the session directory and mutated only through
+//! the lock-guarded [`crate::store::Store`].
+
+use serde::{Deserialize, Serialize};
+
+use crate::util::now_ms;
+
+/// Bumped whenever the on-disk schema changes in an incompatible way.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// The entire persisted state of a co-review session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct State {
+    pub schema_version: u32,
+    pub pr: PrInfo,
+    pub session: SessionMeta,
+    #[serde(default)]
+    pub status: ReviewStatus,
+    #[serde(default)]
+    pub findings: Vec<Finding>,
+    /// Append-only log of messages the human sent to the agent (for context /
+    /// replay). Not every message needs to go here; the TUI records the ones it
+    /// injects into the agent pane.
+    #[serde(default)]
+    pub chat: Vec<ChatEntry>,
+    /// Monotonic counter used to mint finding ids (`f1`, `f2`, …). Kept on the
+    /// state so ids are stable and never reused even after deletions.
+    #[serde(default)]
+    pub next_finding_seq: u64,
+}
+
+impl State {
+    pub fn new(pr: PrInfo, session: SessionMeta) -> Self {
+        State {
+            schema_version: SCHEMA_VERSION,
+            pr,
+            session,
+            status: ReviewStatus::Reviewing,
+            findings: Vec::new(),
+            chat: Vec::new(),
+            next_finding_seq: 0,
+        }
+    }
+
+    /// Mint the next finding id and advance the counter.
+    pub fn mint_finding_id(&mut self) -> String {
+        self.next_finding_seq += 1;
+        format!("f{}", self.next_finding_seq)
+    }
+
+    pub fn finding(&self, id: &str) -> Option<&Finding> {
+        self.findings.iter().find(|f| f.id == id)
+    }
+
+    pub fn finding_mut(&mut self, id: &str) -> Option<&mut Finding> {
+        self.findings.iter_mut().find(|f| f.id == id)
+    }
+
+    /// Findings the human approved (or edited) and that have not yet been posted.
+    pub fn postable(&self) -> impl Iterator<Item = &Finding> {
+        self.findings.iter().filter(|f| f.is_postable())
+    }
+
+    /// Number of findings still awaiting a human decision.
+    pub fn pending_count(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|f| f.verdict == Verdict::Pending)
+            .count()
+    }
+}
+
+/// Metadata about the pull request under review.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrInfo {
+    pub owner: String,
+    pub repo: String,
+    pub number: u64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub author: String,
+    /// The PR's base branch name (e.g. `main`).
+    #[serde(default)]
+    pub base_ref: String,
+    /// The PR's head branch name.
+    #[serde(default)]
+    pub head_ref: String,
+    #[serde(default)]
+    pub base_sha: String,
+    #[serde(default)]
+    pub head_sha: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+impl PrInfo {
+    pub fn slug(&self) -> String {
+        format!(
+            "{}-{}-{}",
+            crate::util::slugify(&self.owner),
+            crate::util::slugify(&self.repo),
+            self.number
+        )
+    }
+}
+
+/// Where the session's files and panes live.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMeta {
+    /// Stable session id, derived from the PR slug.
+    pub id: String,
+    /// Absolute path to the checked-out worktree the agent runs in.
+    pub worktree: String,
+    pub created_at_ms: u64,
+    /// The Herdr pane id running the agent (e.g. `w3:p1`). Used to inject chat.
+    #[serde(default)]
+    pub agent_pane_id: Option<String>,
+    /// The Herdr pane id running the navigator (`co-review view`).
+    #[serde(default)]
+    pub view_pane_id: Option<String>,
+    /// The Herdr workspace id hosting the session.
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    /// Which agent kind is driving (e.g. `claude`, `codex`). Informational.
+    #[serde(default)]
+    pub agent_kind: String,
+    /// The prompt handed to the agent when the session started.
+    #[serde(default)]
+    pub prompt: String,
+}
+
+/// Coarse lifecycle of the review, surfaced in the TUI header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewStatus {
+    /// The agent is still producing findings.
+    #[default]
+    Reviewing,
+    /// The agent finished; the human is triaging.
+    AwaitingReview,
+    /// Approved findings are being posted.
+    Posting,
+    /// Everything approved has been posted; session complete.
+    Done,
+}
+
+impl ReviewStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            ReviewStatus::Reviewing => "reviewing",
+            ReviewStatus::AwaitingReview => "awaiting review",
+            ReviewStatus::Posting => "posting",
+            ReviewStatus::Done => "done",
+        }
+    }
+}
+
+/// A single review finding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Finding {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub severity: Severity,
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Markdown explanation of the problem and, ideally, the fix.
+    #[serde(default)]
+    pub body: String,
+    /// Optional concrete suggestion / patch text.
+    #[serde(default)]
+    pub suggestion: Option<String>,
+    #[serde(default)]
+    pub locations: Vec<Location>,
+    #[serde(default)]
+    pub verdict: Verdict,
+    /// A note the human attached while triaging (shown to the agent).
+    #[serde(default)]
+    pub user_note: Option<String>,
+    #[serde(default)]
+    pub posted: bool,
+    #[serde(default)]
+    pub posted_url: Option<String>,
+    #[serde(default)]
+    pub created_at_ms: u64,
+    #[serde(default)]
+    pub updated_at_ms: u64,
+}
+
+impl Finding {
+    pub fn new(id: String, title: String) -> Self {
+        let now = now_ms();
+        Finding {
+            id,
+            title,
+            severity: Severity::default(),
+            category: None,
+            body: String::new(),
+            suggestion: None,
+            locations: Vec::new(),
+            verdict: Verdict::Pending,
+            user_note: None,
+            posted: false,
+            posted_url: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+        }
+    }
+
+    pub fn primary_location(&self) -> Option<&Location> {
+        self.locations.first()
+    }
+
+    /// Approved (or human-edited) and not yet posted.
+    pub fn is_postable(&self) -> bool {
+        !self.posted && matches!(self.verdict, Verdict::Approved | Verdict::Edited)
+    }
+
+    pub fn touch(&mut self) {
+        self.updated_at_ms = now_ms();
+    }
+}
+
+/// A location a finding points at, in the PR's head or base tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Location {
+    pub file: String,
+    pub start_line: u32,
+    /// Inclusive end line. `None` means a single line.
+    #[serde(default)]
+    pub end_line: Option<u32>,
+    #[serde(default)]
+    pub side: Side,
+}
+
+impl Location {
+    pub fn end(&self) -> u32 {
+        self.end_line.unwrap_or(self.start_line).max(self.start_line)
+    }
+
+    /// A compact `path:line` or `path:start-end` label.
+    pub fn label(&self) -> String {
+        match self.end_line {
+            Some(end) if end != self.start_line => {
+                format!("{}:{}-{}", self.file, self.start_line, end)
+            }
+            _ => format!("{}:{}", self.file, self.start_line),
+        }
+    }
+}
+
+/// Which side of the diff a location refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Side {
+    /// The PR's proposed version (the common case).
+    #[default]
+    Head,
+    /// The base/original version.
+    Base,
+}
+
+/// Severity, ordered from most to least important.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Critical,
+    High,
+    #[default]
+    Medium,
+    Low,
+    /// A nitpick / optional cleanup.
+    Nit,
+}
+
+impl Severity {
+    pub const ALL: [Severity; 5] = [
+        Severity::Critical,
+        Severity::High,
+        Severity::Medium,
+        Severity::Low,
+        Severity::Nit,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Severity::Critical => "critical",
+            Severity::High => "high",
+            Severity::Medium => "medium",
+            Severity::Low => "low",
+            Severity::Nit => "nit",
+        }
+    }
+
+    /// Parse leniently from user/agent input (accepts a few synonyms).
+    pub fn parse(s: &str) -> Option<Severity> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "critical" | "crit" | "blocker" => Some(Severity::Critical),
+            "high" | "major" | "error" => Some(Severity::High),
+            "medium" | "med" | "moderate" | "warning" | "warn" => Some(Severity::Medium),
+            "low" | "minor" => Some(Severity::Low),
+            "nit" | "nitpick" | "info" | "trivial" | "style" => Some(Severity::Nit),
+            _ => None,
+        }
+    }
+
+    /// A short glyph used in the list view.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Severity::Critical => "●",
+            Severity::High => "●",
+            Severity::Medium => "◆",
+            Severity::Low => "○",
+            Severity::Nit => "·",
+        }
+    }
+}
+
+/// The human's decision about a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    /// Not yet triaged.
+    #[default]
+    Pending,
+    /// Accepted; will be posted.
+    Approved,
+    /// Rejected; will not be posted.
+    Dismissed,
+    /// Flagged for live discussion with the agent.
+    NeedsDiscussion,
+    /// Accepted after the human edited the finding text; will be posted.
+    Edited,
+}
+
+impl Verdict {
+    pub fn label(self) -> &'static str {
+        match self {
+            Verdict::Pending => "pending",
+            Verdict::Approved => "approved",
+            Verdict::Dismissed => "dismissed",
+            Verdict::NeedsDiscussion => "discuss",
+            Verdict::Edited => "edited",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Verdict> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" | "reset" => Some(Verdict::Pending),
+            "approved" | "approve" | "accept" | "ok" | "yes" => Some(Verdict::Approved),
+            "dismissed" | "dismiss" | "reject" | "no" | "wontfix" => Some(Verdict::Dismissed),
+            "needs_discussion" | "discuss" | "discussion" | "?" => Some(Verdict::NeedsDiscussion),
+            "edited" | "edit" => Some(Verdict::Edited),
+            _ => None,
+        }
+    }
+}
+
+/// One message the human sent to the agent, optionally about a finding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatEntry {
+    pub at_ms: u64,
+    #[serde(default)]
+    pub finding_id: Option<String>,
+    pub text: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_pr() -> PrInfo {
+        PrInfo {
+            owner: "elKei24".into(),
+            repo: "herdr-co-review".into(),
+            number: 123,
+            title: "Add thing".into(),
+            author: "someone".into(),
+            base_ref: "main".into(),
+            head_ref: "feature".into(),
+            base_sha: "aaa".into(),
+            head_sha: "bbb".into(),
+            url: "https://github.com/elKei24/herdr-co-review/pull/123".into(),
+        }
+    }
+
+    fn sample_session() -> SessionMeta {
+        SessionMeta {
+            id: "elkei24-herdr-co-review-123".into(),
+            worktree: "/tmp/wt".into(),
+            created_at_ms: 1,
+            agent_pane_id: None,
+            view_pane_id: None,
+            workspace_id: None,
+            agent_kind: "claude".into(),
+            prompt: String::new(),
+        }
+    }
+
+    #[test]
+    fn severity_orders_most_important_first() {
+        let mut v = vec![Severity::Nit, Severity::Critical, Severity::Medium];
+        v.sort();
+        assert_eq!(v, vec![Severity::Critical, Severity::Medium, Severity::Nit]);
+    }
+
+    #[test]
+    fn ids_are_stable_and_unique() {
+        let mut s = State::new(sample_pr(), sample_session());
+        assert_eq!(s.mint_finding_id(), "f1");
+        assert_eq!(s.mint_finding_id(), "f2");
+        assert_eq!(s.next_finding_seq, 2);
+    }
+
+    #[test]
+    fn postable_filters_correctly() {
+        let mut s = State::new(sample_pr(), sample_session());
+        let mut f1 = Finding::new("f1".into(), "a".into());
+        f1.verdict = Verdict::Approved;
+        let mut f2 = Finding::new("f2".into(), "b".into());
+        f2.verdict = Verdict::Dismissed;
+        let mut f3 = Finding::new("f3".into(), "c".into());
+        f3.verdict = Verdict::Approved;
+        f3.posted = true;
+        s.findings = vec![f1, f2, f3];
+        let ids: Vec<_> = s.postable().map(|f| f.id.clone()).collect();
+        assert_eq!(ids, vec!["f1"]);
+    }
+
+    #[test]
+    fn location_label() {
+        let single = Location {
+            file: "a.rs".into(),
+            start_line: 5,
+            end_line: None,
+            side: Side::Head,
+        };
+        assert_eq!(single.label(), "a.rs:5");
+        let range = Location {
+            file: "a.rs".into(),
+            start_line: 5,
+            end_line: Some(9),
+            side: Side::Head,
+        };
+        assert_eq!(range.label(), "a.rs:5-9");
+    }
+
+    #[test]
+    fn verdict_and_severity_parse_synonyms() {
+        assert_eq!(Verdict::parse("approve"), Some(Verdict::Approved));
+        assert_eq!(Verdict::parse("WONTFIX"), Some(Verdict::Dismissed));
+        assert_eq!(Severity::parse("Blocker"), Some(Severity::Critical));
+        assert_eq!(Severity::parse("warn"), Some(Severity::Medium));
+        assert_eq!(Severity::parse("bogus"), None);
+    }
+
+    #[test]
+    fn state_json_roundtrips() {
+        let mut s = State::new(sample_pr(), sample_session());
+        let id = s.mint_finding_id();
+        s.findings.push(Finding::new(id, "title".into()));
+        let json = serde_json::to_string_pretty(&s).unwrap();
+        let back: State = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.findings.len(), 1);
+        assert_eq!(back.pr.number, 123);
+        assert_eq!(back.schema_version, SCHEMA_VERSION);
+    }
+}
