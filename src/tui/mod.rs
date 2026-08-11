@@ -32,10 +32,23 @@ pub fn view(args: &SessionArgs) -> Result<()> {
     let store = Store::new(dir);
     let mut app = App::new(store).context("loading co-review session")?;
 
+    install_panic_hook();
     let mut terminal = setup_terminal().context("initializing terminal")?;
     let result = run_loop(&mut terminal, &mut app);
     restore_terminal(&mut terminal).ok();
     result
+}
+
+/// Restore the terminal out of raw/alternate-screen mode if the TUI panics, so a
+/// crash never leaves the user with a mangled terminal. Chains to the previous
+/// hook so the panic is still reported.
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original(info);
+    }));
 }
 
 fn setup_terminal() -> Result<Tui> {
