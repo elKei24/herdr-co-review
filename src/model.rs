@@ -239,6 +239,57 @@ pub struct Location {
 }
 
 impl Location {
+    /// Parse a location from `path:line`, `path:start-end`, with an optional
+    /// `@head`/`@base` suffix (default head). Examples:
+    /// `src/foo.rs:42`, `src/foo.rs:42-50`, `src/foo.rs:10@base`.
+    pub fn parse(input: &str) -> Result<Location, String> {
+        let s = input.trim();
+        if s.is_empty() {
+            return Err("empty location".to_string());
+        }
+        let (rest, side) = match s.rsplit_once('@') {
+            Some((r, "head")) => (r, Side::Head),
+            Some((r, "base")) => (r, Side::Base),
+            Some((_, other)) => return Err(format!("unknown location side '@{other}'")),
+            None => (s, Side::Head),
+        };
+        let (file, lines) = rest
+            .rsplit_once(':')
+            .ok_or_else(|| format!("location '{input}' must be path:line"))?;
+        if file.is_empty() {
+            return Err(format!("location '{input}' has an empty path"));
+        }
+        let (start, end) = match lines.split_once('-') {
+            Some((a, b)) => {
+                let start: u32 = a
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("bad start line in '{input}'"))?;
+                let end: u32 = b
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("bad end line in '{input}'"))?;
+                (start, Some(end))
+            }
+            None => {
+                let start: u32 = lines
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("bad line number in '{input}'"))?;
+                (start, None)
+            }
+        };
+        if start == 0 {
+            return Err(format!("line numbers are 1-based; got 0 in '{input}'"));
+        }
+        Ok(Location {
+            file: file.to_string(),
+            start_line: start,
+            end_line: end.filter(|e| *e != start),
+            side,
+        })
+    }
+
     pub fn end(&self) -> u32 {
         self.end_line.unwrap_or(self.start_line).max(self.start_line)
     }
@@ -430,6 +481,30 @@ mod tests {
         s.findings = vec![f1, f2, f3];
         let ids: Vec<_> = s.postable().map(|f| f.id.clone()).collect();
         assert_eq!(ids, vec!["f1"]);
+    }
+
+    #[test]
+    fn location_parse_variants() {
+        let l = Location::parse("src/foo.rs:42").unwrap();
+        assert_eq!(l.file, "src/foo.rs");
+        assert_eq!(l.start_line, 42);
+        assert_eq!(l.end_line, None);
+        assert_eq!(l.side, Side::Head);
+
+        let r = Location::parse("a/b.rs:10-20").unwrap();
+        assert_eq!((r.start_line, r.end_line), (10, Some(20)));
+
+        let base = Location::parse("x.rs:5@base").unwrap();
+        assert_eq!(base.side, Side::Base);
+        assert_eq!(base.start_line, 5);
+
+        // start == end collapses to single-line
+        assert_eq!(Location::parse("x.rs:7-7").unwrap().end_line, None);
+
+        assert!(Location::parse("noline").is_err());
+        assert!(Location::parse("x.rs:0").is_err());
+        assert!(Location::parse("x.rs:5@weird").is_err());
+        assert!(Location::parse(":5").is_err());
     }
 
     #[test]

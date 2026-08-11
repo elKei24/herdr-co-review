@@ -1,0 +1,563 @@
+//! Handlers for the agent- and human-facing subcommands (everything except
+//! `start`, which lives in [`crate::orchestrate`], and `view`, in [`crate::tui`]).
+
+use std::io::Read;
+
+use anyhow::{anyhow, bail, Context, Result};
+
+use crate::cli::*;
+use crate::diffview;
+use crate::git::Git;
+use crate::model::{Finding, Location, ReviewStatus, Severity, State, Verdict};
+use crate::store::Store;
+
+/// Resolve the [`Store`] a command should act on.
+fn open_store(session: &SessionArgs) -> Result<Store> {
+    let dir = crate::paths::resolve_session_dir(session.session.as_deref())?;
+    Ok(Store::new(dir))
+}
+
+/// Resolve the body text from `--body` / `--body-file` (`-` = stdin).
+fn resolve_text(inline: Option<&str>, file: Option<&str>) -> Result<Option<String>> {
+    if let Some(path) = file {
+        let text = if path == "-" {
+            let mut s = String::new();
+            std::io::stdin()
+                .read_to_string(&mut s)
+                .context("reading from stdin")?;
+            s
+        } else {
+            std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?
+        };
+        return Ok(Some(text));
+    }
+    Ok(inline.map(|s| s.to_string()))
+}
+
+pub fn add_finding(args: &AddFindingArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+
+    let severity = Severity::parse(&args.severity)
+        .ok_or_else(|| anyhow!("unknown severity '{}'", args.severity))?;
+
+    let mut locations = Vec::with_capacity(args.locations.len());
+    for raw in &args.locations {
+        locations.push(Location::parse(raw).map_err(|e| anyhow!("{e}"))?);
+    }
+
+    let body = resolve_text(args.body.as_deref(), args.body_file.as_deref())?.unwrap_or_default();
+
+    let id = store.update(|state| {
+        let id = state.mint_finding_id();
+        let mut f = Finding::new(id.clone(), args.title.clone());
+        f.severity = severity;
+        f.category = args.category.clone();
+        f.body = body.clone();
+        f.suggestion = args.suggestion.clone();
+        f.locations = locations.clone();
+        state.findings.push(f);
+        // Recording a finding means we're actively reviewing.
+        if state.status == ReviewStatus::Done {
+            state.status = ReviewStatus::Reviewing;
+        }
+        Ok(id)
+    })?;
+
+    println!("{id}");
+    Ok(())
+}
+
+pub fn import(args: &ImportArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let raw = resolve_text(None, Some(&args.file))?.unwrap_or_default();
+    let incoming: Vec<IncomingFinding> =
+        serde_json::from_str(&raw).context("parsing findings JSON (expected an array)")?;
+
+    let ids = store.update(|state| {
+        let mut ids = Vec::new();
+        for inc in &incoming {
+            let id = state.mint_finding_id();
+            state.findings.push(inc.to_finding(id.clone()));
+            ids.push(id);
+        }
+        Ok(ids)
+    })?;
+
+    for id in &ids {
+        println!("{id}");
+    }
+    eprintln!("imported {} finding(s)", ids.len());
+    Ok(())
+}
+
+/// A finding as an agent might emit it in a JSON array for `import` — no id,
+/// verdict, or posted state (co-review assigns those).
+#[derive(serde::Deserialize)]
+struct IncomingFinding {
+    title: String,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    suggestion: Option<String>,
+    #[serde(default)]
+    locations: Vec<Location>,
+}
+
+impl IncomingFinding {
+    fn to_finding(&self, id: String) -> Finding {
+        let mut f = Finding::new(id, self.title.clone());
+        f.severity = self
+            .severity
+            .as_deref()
+            .and_then(Severity::parse)
+            .unwrap_or_default();
+        f.category = self.category.clone();
+        f.body = self.body.clone();
+        f.suggestion = self.suggestion.clone();
+        f.locations = self.locations.clone();
+        f
+    }
+}
+
+pub fn verdict(args: &VerdictArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let verdict = Verdict::parse(&args.verdict)
+        .ok_or_else(|| anyhow!("unknown verdict '{}'", args.verdict))?;
+    store.update(|state| {
+        let note = args.note.clone();
+        let f = state
+            .finding_mut(&args.id)
+            .ok_or_else(|| anyhow!("no finding with id '{}'", args.id))?;
+        f.verdict = verdict;
+        if let Some(note) = note {
+            f.user_note = Some(note);
+        }
+        f.touch();
+        Ok(())
+    })?;
+    println!("{} -> {}", args.id, verdict.label());
+    Ok(())
+}
+
+pub fn mark_posted(args: &MarkPostedArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    store.update(|state| {
+        let url = args.url.clone();
+        let f = state
+            .finding_mut(&args.id)
+            .ok_or_else(|| anyhow!("no finding with id '{}'", args.id))?;
+        f.posted = true;
+        f.posted_url = url;
+        f.touch();
+        Ok(())
+    })?;
+    println!("{} marked posted", args.id);
+    Ok(())
+}
+
+pub fn set_status(args: &SetStatusArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let status = parse_status(&args.status)?;
+    store.update(|state| {
+        state.status = status;
+        Ok(())
+    })?;
+    println!("status: {}", status.label());
+    Ok(())
+}
+
+fn parse_status(s: &str) -> Result<ReviewStatus> {
+    match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "reviewing" | "review" => Ok(ReviewStatus::Reviewing),
+        "awaiting_review" | "awaiting" | "handoff" => Ok(ReviewStatus::AwaitingReview),
+        "posting" => Ok(ReviewStatus::Posting),
+        "done" | "complete" | "finished" => Ok(ReviewStatus::Done),
+        other => Err(anyhow!("unknown status '{other}'")),
+    }
+}
+
+pub fn list(args: &ListArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let state = store.read()?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
+
+    let filter = match &args.verdict {
+        Some(v) => Some(Verdict::parse(v).ok_or_else(|| anyhow!("unknown verdict '{v}'"))?),
+        None => None,
+    };
+
+    print_header(&state);
+    let mut shown = 0;
+    for f in &state.findings {
+        if let Some(want) = filter {
+            if f.verdict != want {
+                continue;
+            }
+        }
+        shown += 1;
+        let loc = f
+            .primary_location()
+            .map(|l| l.label())
+            .unwrap_or_else(|| "—".to_string());
+        println!(
+            "  {:<4} {} {:<8} [{:<9}] {}  ({})",
+            f.id,
+            f.severity.glyph(),
+            f.severity.label(),
+            f.verdict.label(),
+            f.title,
+            loc
+        );
+    }
+    if shown == 0 {
+        println!("  (no findings yet)");
+    }
+    Ok(())
+}
+
+fn print_header(state: &State) {
+    println!(
+        "co-review {}/{} #{} — {} finding(s), {} pending [{}]",
+        state.pr.owner,
+        state.pr.repo,
+        state.pr.number,
+        state.findings.len(),
+        state.pending_count(),
+        state.status.label()
+    );
+}
+
+pub fn status(args: &SessionArgs) -> Result<()> {
+    let store = open_store(args)?;
+    let state = store.read()?;
+    print_header(&state);
+    let approved = state
+        .findings
+        .iter()
+        .filter(|f| matches!(f.verdict, Verdict::Approved | Verdict::Edited))
+        .count();
+    let dismissed = state
+        .findings
+        .iter()
+        .filter(|f| f.verdict == Verdict::Dismissed)
+        .count();
+    let posted = state.findings.iter().filter(|f| f.posted).count();
+    println!("  approved/edited: {approved}   dismissed: {dismissed}   posted: {posted}");
+    println!("  worktree: {}", state.session.worktree);
+    println!("  session:  {}", store.session_dir().display());
+    Ok(())
+}
+
+pub fn show(args: &ShowArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let state = store.read()?;
+    let finding = state
+        .finding(&args.id)
+        .ok_or_else(|| anyhow!("no finding with id '{}'", args.id))?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(finding)?);
+        return Ok(());
+    }
+
+    println!(
+        "{}  {} {} [{}]",
+        finding.id,
+        finding.severity.glyph(),
+        finding.severity.label(),
+        finding.verdict.label()
+    );
+    println!("{}", finding.title);
+    if let Some(cat) = &finding.category {
+        println!("category: {cat}");
+    }
+    if !finding.body.is_empty() {
+        println!("\n{}", finding.body);
+    }
+    if let Some(s) = &finding.suggestion {
+        println!("\nsuggestion:\n{s}");
+    }
+    if let Some(note) = &finding.user_note {
+        println!("\nyour note: {note}");
+    }
+
+    // Related code (best-effort; skip silently if git isn't usable here).
+    if let Ok(git) = Git::discover(std::path::Path::new(&state.session.worktree)) {
+        let worktree = std::path::Path::new(&state.session.worktree);
+        println!();
+        for loc in &finding.locations {
+            match diffview::snippet_for_location(
+                &git,
+                worktree,
+                &state.pr.base_sha,
+                &state.pr.head_sha,
+                loc,
+                diffview::DEFAULT_CONTEXT,
+            ) {
+                Ok(snippet) => print!("{}", diffview::render_plain(&snippet)),
+                Err(e) => println!("── {} ── (could not render: {e})", loc.label()),
+            }
+        }
+    } else if !finding.locations.is_empty() {
+        println!("\nlocations:");
+        for loc in &finding.locations {
+            println!("  {}", loc.label());
+        }
+    }
+    Ok(())
+}
+
+pub fn wait(args: &WaitArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let start = std::time::Instant::now();
+    let interval = std::time::Duration::from_millis(args.interval.max(50));
+    loop {
+        let state = store.read()?;
+        let pending = state.pending_count();
+        if pending == 0 {
+            eprintln!(
+                "all {} finding(s) decided; proceed to post the approved ones",
+                state.findings.len()
+            );
+            return Ok(());
+        }
+        if args.timeout > 0 && start.elapsed().as_millis() as u64 >= args.timeout {
+            bail!("timed out with {pending} finding(s) still pending");
+        }
+        std::thread::sleep(interval);
+    }
+}
+
+pub fn post(args: &PostArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+    let state = store.read()?;
+    let postable: Vec<Finding> = state.postable().cloned().collect();
+    if postable.is_empty() {
+        eprintln!("nothing to post (no approved/edited, un-posted findings)");
+        return Ok(());
+    }
+
+    if args.dry_run {
+        println!("would post {} finding(s):", postable.len());
+        for f in &postable {
+            println!(
+                "  {} [{}] {} ({})",
+                f.id,
+                f.severity.label(),
+                f.title,
+                f.primary_location()
+                    .map(|l| l.label())
+                    .unwrap_or_else(|| "no location".into())
+            );
+        }
+        return Ok(());
+    }
+
+    let client = crate::github::Client::from_env()?;
+    let mut posted = 0;
+    for f in &postable {
+        let Some(loc) = f.primary_location() else {
+            eprintln!("skip {}: no location to attach a comment to", f.id);
+            continue;
+        };
+        let comment = crate::github::ReviewComment {
+            body: render_comment_body(f),
+            path: loc.file.clone(),
+            line: loc.end(),
+            start_line: Some(loc.start_line),
+            side: loc.side,
+        };
+        let url = client.post_review_comment(&state.pr, &comment)?;
+        store.update(|st| {
+            if let Some(ff) = st.finding_mut(&f.id) {
+                ff.posted = true;
+                ff.posted_url = Some(url.clone());
+                ff.touch();
+            }
+            Ok(())
+        })?;
+        println!("{} -> {url}", f.id);
+        posted += 1;
+    }
+    store.update(|st| {
+        if st.postable().next().is_none() {
+            st.status = ReviewStatus::Done;
+        }
+        Ok(())
+    })?;
+    eprintln!("posted {posted} finding(s)");
+    Ok(())
+}
+
+/// Render the markdown body posted to GitHub for a finding.
+fn render_comment_body(f: &Finding) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("**{}** ({})\n\n", f.title, f.severity.label()));
+    if !f.body.is_empty() {
+        out.push_str(&f.body);
+        out.push('\n');
+    }
+    if let Some(s) = &f.suggestion {
+        // Prefer a GitHub suggestion block when the fix is code.
+        out.push_str("\n```suggestion\n");
+        out.push_str(s.trim_end_matches('\n'));
+        out.push_str("\n```\n");
+    }
+    if f.verdict == Verdict::Edited {
+        if let Some(note) = &f.user_note {
+            out.push_str(&format!("\n> {note}\n"));
+        }
+    }
+    out
+}
+
+pub fn protocol() -> Result<()> {
+    print!("{}", crate::protocol::PROTOCOL_MD);
+    Ok(())
+}
+
+pub fn doctor() -> Result<()> {
+    fn mark(ok: bool) -> &'static str {
+        if ok {
+            "ok  "
+        } else {
+            "MISS"
+        }
+    }
+
+    println!("co-review {}", env!("CARGO_PKG_VERSION"));
+
+    let git = crate::exec::have("git");
+    println!("[{}] git", mark(git));
+
+    let herdr = crate::herdr::Herdr::new(false);
+    let herdr_ok = herdr.available();
+    println!(
+        "[{}] herdr{}",
+        mark(herdr_ok),
+        if herdr.is_dry_run() {
+            " (dry-run forced via env)"
+        } else {
+            ""
+        }
+    );
+
+    let cfg = crate::config::Config::load().unwrap_or_default();
+    let agent_ok = crate::exec::have(&cfg.default_agent)
+        || cfg
+            .agent(&cfg.default_agent)
+            .and_then(|a| a.command.first())
+            .map(|c| crate::exec::have(c))
+            .unwrap_or(false);
+    println!("[{}] default agent: {}", mark(agent_ok), cfg.default_agent);
+
+    let token = crate::github::resolve_token().is_some();
+    println!(
+        "[{}] github token ({})",
+        mark(token),
+        if token {
+            "found"
+        } else {
+            "set $GH_TOKEN/$GITHUB_TOKEN or run gh auth login"
+        }
+    );
+
+    match crate::paths::config_path() {
+        Ok(p) => println!(
+            "     config:   {} ({})",
+            p.display(),
+            if p.is_file() { "present" } else { "defaults" }
+        ),
+        Err(e) => println!("     config:   unavailable ({e})"),
+    }
+    match crate::paths::base_dir() {
+        Ok(p) => println!("     state:    {}", p.display()),
+        Err(e) => println!("     state:    unavailable ({e})"),
+    }
+
+    // Enumerate any live sessions.
+    if let Ok(sessions) = crate::paths::sessions_dir() {
+        if sessions.is_dir() {
+            let mut any = false;
+            for entry in std::fs::read_dir(&sessions).into_iter().flatten().flatten() {
+                let store = Store::new(entry.path());
+                if let Ok(state) = store.read_lossy() {
+                    if !any {
+                        println!("     sessions:");
+                        any = true;
+                    }
+                    println!(
+                        "       {} #{}  {} finding(s) [{}]",
+                        state.pr.repo,
+                        state.pr.number,
+                        state.findings.len(),
+                        state.status.label()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn prompt() -> Result<()> {
+    let cfg = crate::config::Config::load()?;
+    println!("{}", cfg.prompt);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Finding, Severity, Verdict};
+
+    #[test]
+    fn status_parsing() {
+        assert_eq!(parse_status("done").unwrap(), ReviewStatus::Done);
+        assert_eq!(
+            parse_status("awaiting-review").unwrap(),
+            ReviewStatus::AwaitingReview
+        );
+        assert!(parse_status("nope").is_err());
+    }
+
+    #[test]
+    fn comment_body_includes_title_and_suggestion() {
+        let mut f = Finding::new("f1".into(), "Bug".into());
+        f.severity = Severity::High;
+        f.body = "explanation".into();
+        f.suggestion = Some("let x = 2;".into());
+        let body = render_comment_body(&f);
+        assert!(body.contains("**Bug** (high)"));
+        assert!(body.contains("explanation"));
+        assert!(body.contains("```suggestion"));
+    }
+
+    #[test]
+    fn comment_body_appends_edited_note() {
+        let mut f = Finding::new("f1".into(), "T".into());
+        f.verdict = Verdict::Edited;
+        f.user_note = Some("tweak wording".into());
+        let body = render_comment_body(&f);
+        assert!(body.contains("> tweak wording"));
+    }
+
+    #[test]
+    fn resolve_text_prefers_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("b.md");
+        std::fs::write(&p, "from file").unwrap();
+        let got = resolve_text(Some("inline"), Some(p.to_str().unwrap())).unwrap();
+        assert_eq!(got.as_deref(), Some("from file"));
+        let got2 = resolve_text(Some("inline"), None).unwrap();
+        assert_eq!(got2.as_deref(), Some("inline"));
+    }
+}
