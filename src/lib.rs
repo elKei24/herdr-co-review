@@ -42,6 +42,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::List(args) => commands::list(args),
         Command::Show(args) => commands::show(args),
         Command::Verdict(args) => commands::verdict(args),
+        Command::Edit(args) => commands::edit(args),
         Command::Wait(args) => commands::wait(args),
         Command::Post(args) => commands::post(args),
         Command::MarkPosted(args) => commands::mark_posted(args),

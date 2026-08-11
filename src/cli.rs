@@ -42,6 +42,9 @@ pub enum Command {
     /// Set a finding's verdict (approved/dismissed/discuss/edited/pending).
     Verdict(VerdictArgs),
 
+    /// Revise an existing finding's fields (after you and the agent discuss it).
+    Edit(EditArgs),
+
     /// [agent] Block until every finding has a verdict.
     Wait(WaitArgs),
 
@@ -193,6 +196,36 @@ pub struct VerdictArgs {
     /// Attach or replace the human note shown to the agent.
     #[arg(long)]
     pub note: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct EditArgs {
+    #[command(flatten)]
+    pub session: SessionArgs,
+    /// Finding id (e.g. `f3`).
+    pub id: String,
+    /// New title.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// New severity: critical|high|medium|low|nit.
+    #[arg(long)]
+    pub severity: Option<String>,
+    /// New category.
+    #[arg(long)]
+    pub category: Option<String>,
+    /// New markdown body.
+    #[arg(long)]
+    pub body: Option<String>,
+    /// Read the new body from a file (`-` for stdin). Overrides --body.
+    #[arg(long, value_name = "FILE")]
+    pub body_file: Option<String>,
+    /// New suggested replacement.
+    #[arg(long)]
+    pub suggestion: Option<String>,
+    /// Replace the locations with these (`path:line` / `path:start-end`).
+    /// Repeatable.
+    #[arg(long = "location", value_name = "PATH:LINE")]
+    pub locations: Vec<String>,
 }
 
 #[derive(Args, Debug)]

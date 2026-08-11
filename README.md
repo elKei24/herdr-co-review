@@ -177,6 +177,7 @@ co-review import findings.json        # bulk add from a JSON array
 co-review set-status awaiting_review
 co-review wait                        # block until you've decided every finding
 co-review list --json                 # read verdicts + your notes
+co-review edit f3 --body "…"          # revise a finding after you discuss it
 co-review mark-posted f3 --url <url>  # after posting to GitHub
 ```
 

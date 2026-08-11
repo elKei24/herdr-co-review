@@ -57,8 +57,9 @@ subcommands then find the session automatically; no `--session` needed.
 
 4. **Collaborate while you wait.** The human may message you about a specific
    finding (their messages arrive prefixed like `[co-review f3] …`). Discuss it.
-   If you both agree a finding should change, update it:
-   `co-review verdict f3 dismissed` or add/adjust findings as needed.
+   If you both agree a finding should change, update it: `co-review verdict f3
+   dismissed`, or revise its text with `co-review edit f3 --body "…"` (only the
+   fields you pass change), or add a new finding.
 
 5. **Post.** When `co-review wait` returns, read the decisions and post:
 

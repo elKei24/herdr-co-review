@@ -139,6 +139,55 @@ pub fn verdict(args: &VerdictArgs) -> Result<()> {
     Ok(())
 }
 
+pub fn edit(args: &EditArgs) -> Result<()> {
+    let store = open_store(&args.session)?;
+
+    // Validate inputs before taking the lock so a bad value doesn't touch state.
+    let severity = match &args.severity {
+        Some(s) => Some(Severity::parse(s).ok_or_else(|| anyhow!("unknown severity '{s}'"))?),
+        None => None,
+    };
+    let new_body = resolve_text(args.body.as_deref(), args.body_file.as_deref())?;
+    let new_locations = if args.locations.is_empty() {
+        None
+    } else {
+        Some(
+            args.locations
+                .iter()
+                .map(|raw| Location::parse(raw).map_err(|e| anyhow!("{e}")))
+                .collect::<Result<Vec<_>>>()?,
+        )
+    };
+
+    store.update(|state| {
+        let f = state
+            .finding_mut(&args.id)
+            .ok_or_else(|| anyhow!("no finding with id '{}'", args.id))?;
+        if let Some(t) = &args.title {
+            f.title = t.clone();
+        }
+        if let Some(s) = severity {
+            f.severity = s;
+        }
+        if let Some(c) = &args.category {
+            f.category = Some(c.clone());
+        }
+        if let Some(b) = &new_body {
+            f.body = b.clone();
+        }
+        if let Some(s) = &args.suggestion {
+            f.suggestion = Some(s.clone());
+        }
+        if let Some(locs) = &new_locations {
+            f.locations = locs.clone();
+        }
+        f.touch();
+        Ok(())
+    })?;
+    println!("{} updated", args.id);
+    Ok(())
+}
+
 pub fn mark_posted(args: &MarkPostedArgs) -> Result<()> {
     let store = open_store(&args.session)?;
     store.update(|state| {

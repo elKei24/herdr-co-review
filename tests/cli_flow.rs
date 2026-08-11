@@ -144,6 +144,27 @@ fn full_agent_flow() {
     assert_eq!(v["findings"][0]["verdict"], "pending");
     assert_eq!(v["findings"][0]["severity"], "high");
 
+    // edit revises only the passed fields
+    let (_o, err, ok) = co_review(
+        &home,
+        Some(&session),
+        &work,
+        &[
+            "edit",
+            "f1",
+            "--title",
+            "Off-by-one on line 2",
+            "--severity",
+            "critical",
+        ],
+    );
+    assert!(ok, "edit failed: {err}");
+    let (out, _e, _ok) = co_review(&home, Some(&session), &work, &["list", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["findings"][0]["title"], "Off-by-one on line 2");
+    assert_eq!(v["findings"][0]["severity"], "critical");
+    assert_eq!(v["findings"][0]["body"], "line 2 changed"); // untouched
+
     // verdict approve
     let (_o, err, ok) = co_review(&home, Some(&session), &work, &["verdict", "f1", "approved"]);
     assert!(ok, "verdict failed: {err}");
@@ -163,7 +184,7 @@ fn full_agent_flow() {
     let (out, err, ok) = co_review(&home, Some(&session), &work, &["post", "--dry-run"]);
     assert!(ok, "post --dry-run failed: {err}");
     assert!(out.contains("would post 1 finding"), "unexpected: {out}");
-    assert!(out.contains("Check line 2"));
+    assert!(out.contains("Off-by-one on line 2")); // the edited title
 
     // sessions lists the live session
     let (out, _e, ok) = co_review(&home, None, &work, &["sessions"]);

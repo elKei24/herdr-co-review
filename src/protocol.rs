@@ -110,6 +110,9 @@ because the commands find the session automatically.
 
 - `co-review verdict <id> <verdict> [--note "..."]` — set a verdict/note (you
   normally only do this if you and the human agree to change one).
+- `co-review edit <id> [--title ...] [--severity ...] [--body ...] [--body-file -]
+  [--suggestion ...] [--location path:line ...]` — revise an existing finding
+  after you and the human discuss it. Only the fields you pass change.
 - `co-review mark-posted <id> --url <comment-url>` — record that you posted it.
 - `co-review set-status <reviewing|awaiting_review|posting|done>` — move the
   lifecycle along; the human's navigator shows this status.
