@@ -159,7 +159,7 @@ pub fn edit(args: &EditArgs) -> Result<()> {
         )
     };
 
-    store.update(|state| {
+    let reset = store.update(|state| {
         let f = state
             .finding_mut(&args.id)
             .ok_or_else(|| anyhow!("no finding with id '{}'", args.id))?;
@@ -169,22 +169,41 @@ pub fn edit(args: &EditArgs) -> Result<()> {
         if let Some(s) = severity {
             f.severity = s;
         }
-        if let Some(c) = &args.category {
+        if args.clear_category {
+            f.category = None;
+        } else if let Some(c) = &args.category {
             f.category = Some(c.clone());
         }
         if let Some(b) = &new_body {
             f.body = b.clone();
         }
-        if let Some(s) = &args.suggestion {
+        if args.clear_suggestion {
+            f.suggestion = None;
+        } else if let Some(s) = &args.suggestion {
             f.suggestion = Some(s.clone());
         }
-        if let Some(locs) = &new_locations {
+        if args.clear_locations {
+            f.locations.clear();
+        } else if let Some(locs) = &new_locations {
             f.locations = locs.clone();
         }
+        // Revised text should be re-triaged: reset a decided verdict to pending
+        // unless the caller opted to keep it.
+        let reset = !args.keep_verdict && f.verdict != Verdict::Pending;
+        if reset {
+            f.verdict = Verdict::Pending;
+        }
         f.touch();
-        Ok(())
+        Ok(reset)
     })?;
-    println!("{} updated", args.id);
+    if reset {
+        println!(
+            "{} updated (verdict reset to pending — re-triage it)",
+            args.id
+        );
+    } else {
+        println!("{} updated", args.id);
+    }
     Ok(())
 }
 
@@ -392,24 +411,29 @@ pub fn post(args: &PostArgs) -> Result<()> {
             continue;
         };
         let comment = crate::github::ReviewComment {
-            body: render_comment_body(f),
+            body: render_comment_body(f, true),
             path: loc.file.clone(),
             line: loc.end(),
             start_line: Some(loc.start_line),
             side: loc.side,
         };
-        // Fall back to a general PR comment if the inline comment is rejected
-        // (most commonly because the referenced line isn't part of the diff).
+        // Only fall back to a general PR comment when GitHub rejects the *line*
+        // (422 — the line isn't part of the diff). Transient/auth failures
+        // propagate so the post can be retried instead of being downgraded.
         let url = match client.post_review_comment(&state.pr, &comment) {
             Ok(url) => url,
-            Err(e) => {
-                eprintln!(
-                    "{}: inline comment failed ({e}); posting as a PR comment",
-                    f.id
+            Err(e) if line_not_in_diff(&e) => {
+                eprintln!("{}: line not in the diff; posting as a PR comment", f.id);
+                // A ```suggestion block is only applyable inline, so render the
+                // conversation comment with a plain code block instead.
+                let body = format!(
+                    "{}\n\n_re `{}`_",
+                    render_comment_body(f, false),
+                    loc.label()
                 );
-                let body = format!("{}\n\n_re `{}`_", render_comment_body(f), loc.label());
                 client.post_issue_comment(&state.pr, &body)?
             }
+            Err(e) => return Err(e),
         };
         store.update(|st| {
             if let Some(ff) = st.finding_mut(&f.id) {
@@ -432,8 +456,15 @@ pub fn post(args: &PostArgs) -> Result<()> {
     Ok(())
 }
 
-/// Render the markdown body posted to GitHub for a finding.
-fn render_comment_body(f: &Finding) -> String {
+/// Whether a post error is GitHub's "line isn't part of the diff" rejection.
+fn line_not_in_diff(e: &anyhow::Error) -> bool {
+    e.to_string().contains("422")
+}
+
+/// Render the markdown body posted to GitHub for a finding. `applyable_suggestion`
+/// controls whether a suggestion is emitted as a GitHub ```suggestion block
+/// (only meaningful on an inline review comment) or a plain code block.
+fn render_comment_body(f: &Finding, applyable_suggestion: bool) -> String {
     let mut out = String::new();
     out.push_str(&format!("**{}** ({})\n\n", f.title, f.severity.label()));
     if !f.body.is_empty() {
@@ -441,8 +472,12 @@ fn render_comment_body(f: &Finding) -> String {
         out.push('\n');
     }
     if let Some(s) = &f.suggestion {
-        // Prefer a GitHub suggestion block when the fix is code.
-        out.push_str("\n```suggestion\n");
+        let fence = if applyable_suggestion {
+            "suggestion"
+        } else {
+            ""
+        };
+        out.push_str(&format!("\n**Suggested fix:**\n```{fence}\n"));
         out.push_str(s.trim_end_matches('\n'));
         out.push_str("\n```\n");
     }
@@ -652,7 +687,7 @@ mod tests {
         f.severity = Severity::High;
         f.body = "explanation".into();
         f.suggestion = Some("let x = 2;".into());
-        let body = render_comment_body(&f);
+        let body = render_comment_body(&f, true);
         assert!(body.contains("**Bug** (high)"));
         assert!(body.contains("explanation"));
         assert!(body.contains("```suggestion"));
@@ -663,7 +698,7 @@ mod tests {
         let mut f = Finding::new("f1".into(), "T".into());
         f.verdict = Verdict::Edited;
         f.user_note = Some("tweak wording".into());
-        let body = render_comment_body(&f);
+        let body = render_comment_body(&f, true);
         assert!(body.contains("> tweak wording"));
     }
 

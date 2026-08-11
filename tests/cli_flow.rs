@@ -266,6 +266,98 @@ fn resume_updates_worktree_to_new_head() {
 }
 
 #[test]
+fn edit_resets_decided_verdict_and_clears_fields() {
+    if !have_git() {
+        eprintln!("git unavailable; skipping");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let bare = root.path().join("origin.git");
+    let work = root.path().join("work");
+    git(
+        root.path(),
+        &["init", "-q", "--bare", bare.to_str().unwrap()],
+    );
+    git(
+        root.path(),
+        &[
+            "clone",
+            "-q",
+            bare.to_str().unwrap(),
+            work.to_str().unwrap(),
+        ],
+    );
+    git(&work, &["config", "user.email", "t@t"]);
+    git(&work, &["config", "user.name", "t"]);
+    std::fs::write(work.join("f.txt"), "a\nb\n").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-qm", "base"]);
+    git(&work, &["push", "-q", "origin", "HEAD:main"]);
+    git(&work, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(work.join("f.txt"), "a\nB\n").unwrap();
+    git(&work, &["commit", "-qam", "c"]);
+    git(&work, &["push", "-q", "origin", "HEAD:refs/pull/1/head"]);
+
+    let (_o, err, ok) = co_review(&home, None, &work, &["start", "owner/repo#1"]);
+    assert!(ok, "start failed: {err}");
+    let session = home.join("sessions").join("owner-repo-1");
+
+    co_review(
+        &home,
+        Some(&session),
+        &work,
+        &[
+            "add-finding",
+            "--title",
+            "T",
+            "--severity",
+            "low",
+            "--location",
+            "f.txt:2",
+            "--suggestion",
+            "let x = 1;",
+            "--category",
+            "style",
+        ],
+    );
+    co_review(&home, Some(&session), &work, &["verdict", "f1", "approved"]);
+
+    // editing a decided finding resets its verdict and can clear fields
+    let (out, err, ok) = co_review(
+        &home,
+        Some(&session),
+        &work,
+        &[
+            "edit",
+            "f1",
+            "--body",
+            "new body",
+            "--clear-suggestion",
+            "--clear-category",
+        ],
+    );
+    assert!(ok, "edit failed: {err}");
+    assert!(
+        out.contains("reset to pending"),
+        "expected reset note: {out}"
+    );
+
+    let (out, _e, _ok) = co_review(&home, Some(&session), &work, &["list", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["findings"][0]["verdict"], "pending");
+    assert_eq!(v["findings"][0]["body"], "new body");
+    assert!(
+        v["findings"][0]["suggestion"].is_null(),
+        "suggestion not cleared"
+    );
+    assert!(
+        v["findings"][0]["category"].is_null(),
+        "category not cleared"
+    );
+}
+
+#[test]
 fn doctor_runs_without_a_session() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");

@@ -234,9 +234,11 @@ pub fn start(args: &StartArgs) -> Result<()> {
 
     // Driving Herdr is the one part we can't verify locally, so never let a
     // Herdr hiccup lose the (already-prepared) session: on failure, print the
-    // exact commands to open the two panes by hand.
+    // exact commands to open the two panes by hand. We still exit non-zero so a
+    // script can tell the split didn't open, while the session stays on disk.
     if let Err(e) = launch_layout(&plan, &store) {
         print_manual_fallback(&plan, &e);
+        bail!("the Herdr split could not be created automatically (see instructions above); the session is ready to open by hand");
     }
     Ok(())
 }
@@ -346,23 +348,29 @@ fn launch_layout(plan: &LayoutPlan, store: &Store) -> Result<()> {
         );
     }
 
+    // Persist pane ids as soon as each is created, so a later failure still
+    // leaves the workspace recorded (and thus cleanable via `co-review end`)
+    // rather than orphaned.
     let ws = herdr.workspace_create(&plan.worktree, &plan.label)?;
     let agent_pane = ws.first_pane.clone();
+    store.update(|s| {
+        s.session.workspace_id = Some(ws.id.clone());
+        s.session.agent_pane_id = Some(agent_pane.clone());
+        Ok(())
+    })?;
+
     // Navigator on the right; keep focus on the agent pane.
     let view_pane = herdr.pane_split(&agent_pane, Direction::Right, false)?;
+    store.update(|s| {
+        s.session.view_pane_id = Some(view_pane.clone());
+        Ok(())
+    })?;
 
     herdr.pane_run(&view_pane, &plan.view_argv)?;
     if let Some(agent_argv) = &plan.agent_argv {
         herdr.pane_run(&agent_pane, agent_argv)?;
     }
     herdr.pane_focus(&agent_pane).ok();
-
-    store.update(|s| {
-        s.session.workspace_id = Some(ws.id.clone());
-        s.session.agent_pane_id = Some(agent_pane.clone());
-        s.session.view_pane_id = Some(view_pane.clone());
-        Ok(())
-    })?;
     Ok(())
 }
 

@@ -95,11 +95,7 @@ impl Client {
         let value = self
             .post(&url, body)
             .with_context(|| format!("posting review comment on {}", comment.path))?;
-        value
-            .get("html_url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("GitHub response had no html_url"))
+        html_url(&value)
     }
 
     /// Post a general (non-inline) comment on the PR conversation. Used as a
@@ -113,12 +109,17 @@ impl Client {
         let value = self
             .post(&url, json!({ "body": body }))
             .with_context(|| format!("posting a PR comment on {}", pr.number))?;
-        value
-            .get("html_url")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("GitHub response had no html_url"))
+        html_url(&value)
     }
+}
+
+/// Extract the `html_url` from a created-comment response.
+fn html_url(value: &serde_json::Value) -> Result<String> {
+    value
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("GitHub response had no html_url"))
 }
 
 /// The pieces of an inline review comment.

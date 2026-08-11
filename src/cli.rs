@@ -226,6 +226,19 @@ pub struct EditArgs {
     /// Repeatable.
     #[arg(long = "location", value_name = "PATH:LINE")]
     pub locations: Vec<String>,
+    /// Remove the category.
+    #[arg(long, conflicts_with = "category")]
+    pub clear_category: bool,
+    /// Remove the suggestion.
+    #[arg(long, conflicts_with = "suggestion")]
+    pub clear_suggestion: bool,
+    /// Remove all locations.
+    #[arg(long = "clear-locations", conflicts_with = "locations")]
+    pub clear_locations: bool,
+    /// Keep the current verdict instead of resetting it to pending. By default,
+    /// editing a decided finding resets it so the revised text gets re-triaged.
+    #[arg(long)]
+    pub keep_verdict: bool,
 }
 
 #[derive(Args, Debug)]
