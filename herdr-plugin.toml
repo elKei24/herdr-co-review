@@ -7,7 +7,7 @@
 
 id = "elkei24.co-review"
 name = "co-review"
-version = "1.4.3"
+version = "1.4.4"
 min_herdr_version = "0.8.0"
 description = "Interactive, split-screen PR co-review between you and your AI agent."
 platforms = ["linux", "macos"]

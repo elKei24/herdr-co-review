@@ -1,3 +1,10 @@
+## [1.4.4](https://github.com/elKei24/herdr-co-review/compare/v1.4.3...v1.4.4) (2026-08-12)
+
+
+### Bug Fixes
+
+* redraw the review pane when the terminal resizes ([#9](https://github.com/elKei24/herdr-co-review/issues/9)) ([0989397](https://github.com/elKei24/herdr-co-review/commit/09893971bcc9eb601169060689bb522d503e0d3b))
+
 ## [1.4.3](https://github.com/elKei24/herdr-co-review/compare/v1.4.2...v1.4.3) (2026-08-12)
 
 
