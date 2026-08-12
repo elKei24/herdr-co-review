@@ -1,3 +1,10 @@
+## [1.5.3](https://github.com/elKei24/herdr-co-review/compare/v1.5.2...v1.5.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** bump ureq from 2.12.1 to 3.4.0 ([#12](https://github.com/elKei24/herdr-co-review/issues/12)) ([4ceb150](https://github.com/elKei24/herdr-co-review/commit/4ceb150cf32108dbeaa10308d31999c666f07c89))
+
 ## [1.5.2](https://github.com/elKei24/herdr-co-review/compare/v1.5.1...v1.5.2) (2026-08-12)
 
 
