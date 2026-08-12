@@ -29,12 +29,16 @@ fn plugin_binary(root: &Path, plugin: &str) -> PathBuf {
 }
 
 /// A home with a plugin binary in it, plus the install dir the tests link into.
-fn setup() -> (TempDir, PathBuf, PathBuf) {
+fn setup_at(plugin: &str) -> (TempDir, PathBuf, PathBuf) {
     let root = tempfile::tempdir().unwrap();
-    let src = plugin_binary(root.path(), PLUGIN);
+    let src = plugin_binary(root.path(), plugin);
     let dir = root.path().join("bin");
     fs::create_dir_all(&dir).unwrap();
     (root, src, dir)
+}
+
+fn setup() -> (TempDir, PathBuf, PathBuf) {
+    setup_at(PLUGIN)
 }
 
 /// Run the script for `src`. `dir` is the install dir override, and every
@@ -111,6 +115,28 @@ fn repairs_a_link_left_dangling_by_an_uninstall() {
     let (out, ok) = link_into(&src, &dir, root.path());
     assert!(ok, "script failed: {out}");
     assert_eq!(fs::read_link(dir.join("co-review")).unwrap(), src);
+}
+
+#[test]
+fn links_to_the_final_plugin_dir_when_built_in_a_staging_checkout() {
+    // `herdr plugin install` runs the build in plugins/.tmp-install-*/checkout
+    // and moves that checkout to plugins/github/<id>-<sha256(id)[:12]> after —
+    // a link to the staging path would dangle (verified on herdr 0.8.0).
+    let staging = "herdr/plugins/.tmp-install-123-456/checkout";
+    let (root, src, dir) = setup_at(staging);
+    fs::write(
+        root.path().join(staging).join("herdr-plugin.toml"),
+        "id = \"elkei24.co-review\"\nname = \"co-review\"\n",
+    )
+    .unwrap();
+
+    let (out, ok) = link_into(&src, &dir, root.path());
+    assert!(ok, "script failed: {out}");
+    // sha256("elkei24.co-review")[..12]
+    let expected = root
+        .path()
+        .join("herdr/plugins/github/elkei24.co-review-cd7e469ad4bb/bin/co-review");
+    assert_eq!(fs::read_link(dir.join("co-review")).unwrap(), expected);
 }
 
 #[test]
