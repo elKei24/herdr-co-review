@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/elKei24/herdr-co-review/compare/v1.5.1...v1.5.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** bump ratatui from 0.29.0 to 0.30.2 ([#2](https://github.com/elKei24/herdr-co-review/issues/2)) ([8489542](https://github.com/elKei24/herdr-co-review/commit/8489542c450a6baba1a8a79062ab43887280a0fd))
+
 ## [1.5.1](https://github.com/elKei24/herdr-co-review/compare/v1.5.0...v1.5.1) (2026-08-12)
 
 
