@@ -45,23 +45,29 @@ pub fn have(program: &str) -> bool {
     which(program).is_some()
 }
 
+/// Every `PATH` location `program` could occupy, in lookup order (including the
+/// Windows executable extensions).
+fn path_candidates(program: &str) -> impl Iterator<Item = std::path::PathBuf> + '_ {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    std::env::split_paths(&path)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flat_map(move |dir| {
+            let bare = dir.join(program);
+            let with_ext = ["exe", "cmd", "bat"].map(|ext| bare.with_extension(ext));
+            std::iter::once(bare).chain(with_ext)
+        })
+}
+
 /// Locate a program on `PATH`, returning its full path if found.
 pub fn which(program: &str) -> Option<std::path::PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(program);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        // Windows executables.
-        for ext in ["exe", "cmd", "bat"] {
-            let c = candidate.with_extension(ext);
-            if c.is_file() {
-                return Some(c);
-            }
-        }
-    }
-    None
+    path_candidates(program).find(|c| c.is_file())
+}
+
+/// The first entry named `program` on `PATH`, runnable or not — a dangling
+/// symlink is what an uninstalled plugin leaves behind, and `which` skips it.
+pub fn path_entry(program: &str) -> Option<std::path::PathBuf> {
+    path_candidates(program).find(|c| c.symlink_metadata().is_ok())
 }
 
 fn raw<S: AsRef<OsStr>>(program: &str, args: &[S], cwd: Option<&Path>) -> Result<Output> {
