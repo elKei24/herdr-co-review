@@ -12,7 +12,10 @@ use std::io::{self, Stdout};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -23,7 +26,7 @@ use ratatui::Terminal;
 use crate::cli::ViewArgs;
 use crate::model::Verdict;
 use crate::store::Store;
-use app::{App, Input};
+use app::{App, Input, Pane};
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -49,7 +52,12 @@ fn install_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+            crossterm::cursor::Show
+        );
         original(info);
     }));
 }
@@ -57,14 +65,18 @@ fn install_panic_hook() {
 fn setup_terminal() -> Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     Ok(Terminal::new(backend)?)
 }
 
 fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -101,6 +113,39 @@ fn handle_event(app: &mut App, ev: Event) {
         // `Terminal::draw` is what reflows the buffers to the new size, so a
         // resize has to request a repaint or the pane keeps the old geometry.
         Event::Resize(..) => app.dirty = true,
+        Event::Mouse(mouse) => handle_mouse(app, mouse),
+        _ => {}
+    }
+}
+
+/// Clicking a pane focuses it (and, in the list, selects the finding under the
+/// cursor); the wheel scrolls whichever pane is focused, after a wheel event
+/// over a pane focuses it too.
+fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
+    if app.show_help || app.input.is_some() {
+        return;
+    }
+    let pane = app.pane_at(mouse.column, mouse.row);
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let Some(pane) = pane else { return };
+            app.focus_pane(pane);
+            if pane == Pane::Findings {
+                app.select_at_row(mouse.row);
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if let Some(pane) = pane {
+                app.focus_pane(pane);
+            }
+            app.scroll_focus_down();
+        }
+        MouseEventKind::ScrollUp => {
+            if let Some(pane) = pane {
+                app.focus_pane(pane);
+            }
+            app.scroll_focus_up();
+        }
         _ => {}
     }
 }
@@ -221,14 +266,110 @@ mod tests {
         store
     }
 
+    /// A seeded session plus `extra` further findings, drawn once so the app
+    /// knows its pane geometry (which is what mouse events are resolved against).
+    fn drawn_app(dir: &std::path::Path, extra: usize) -> App {
+        let store = seed(dir);
+        if extra > 0 {
+            store
+                .update(|s| {
+                    for i in 0..extra {
+                        s.findings
+                            .push(Finding::new(format!("f{}", i + 2), format!("Finding {i}")));
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let mut app = App::new(store).unwrap();
+        let mut term = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
+        app
+    }
+
+    fn click(column: u16, row: u16) -> Event {
+        mouse(MouseEventKind::Down(MouseButton::Left), column, row)
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn clicking_a_findings_row_selects_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = drawn_app(dir.path(), 3);
+        let (x, row) = (app.list_area.x + 4, app.list_area.y + 3); // third row
+        handle_event(&mut app, click(x, row));
+        assert_eq!(app.selected, 2);
+        assert_eq!(app.focus, Pane::Findings);
+    }
+
+    #[test]
+    fn clicking_past_the_last_finding_keeps_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = drawn_app(dir.path(), 1);
+        let (x, row) = (app.list_area.x + 4, app.list_area.bottom() - 2);
+        handle_event(&mut app, click(x, row));
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn clicking_the_detail_pane_moves_the_scroll_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = drawn_app(dir.path(), 3);
+        assert_eq!(app.focus, Pane::Findings);
+
+        let (x, y) = (app.detail_area.x + 4, app.detail_area.y + 2);
+        handle_event(&mut app, click(x, y));
+        assert_eq!(app.focus, Pane::Detail);
+
+        // The wheel now scrolls the detail, not the findings list.
+        let before = app.selected;
+        handle_event(&mut app, mouse(MouseEventKind::ScrollDown, x, y));
+        assert_eq!(app.selected, before, "the list must not move");
+        assert!(app.detail_scroll > 0, "the detail must scroll");
+    }
+
+    #[test]
+    fn the_wheel_over_the_findings_list_moves_the_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = drawn_app(dir.path(), 3);
+        app.focus = Pane::Detail;
+        let x = app.list_area.x + 4;
+        let y = app.list_area.y + 2;
+
+        handle_event(&mut app, mouse(MouseEventKind::ScrollDown, x, y));
+        assert_eq!(app.focus, Pane::Findings, "scrolling a pane focuses it");
+        assert_eq!(app.selected, 1);
+
+        handle_event(&mut app, mouse(MouseEventKind::ScrollUp, x, y));
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn the_help_overlay_swallows_mouse_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = drawn_app(dir.path(), 3);
+        app.show_help = true;
+        let (x, y) = (app.list_area.x + 4, app.list_area.y + 3);
+        handle_event(&mut app, click(x, y));
+        assert_eq!(app.selected, 0);
+    }
+
     #[test]
     fn renders_header_list_and_detail() {
         let dir = tempfile::tempdir().unwrap();
         let store = seed(dir.path());
-        let app = App::new(store).unwrap();
+        let mut app = App::new(store).unwrap();
         let backend = TestBackend::new(100, 40);
         let mut term = Terminal::new(backend).unwrap();
-        term.draw(|f| ui::draw(f, &app)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
         let text = buffer_text(&term);
         assert!(text.contains("#7"), "header PR number missing:\n{text}");
         assert!(text.contains("Add pagination"), "PR title missing");
@@ -254,10 +395,10 @@ mod tests {
     fn renders_in_a_narrow_short_terminal() {
         let dir = tempfile::tempdir().unwrap();
         let store = seed(dir.path());
-        let app = App::new(store).unwrap();
+        let mut app = App::new(store).unwrap();
         let backend = TestBackend::new(40, 12);
         let mut term = Terminal::new(backend).unwrap();
-        term.draw(|f| ui::draw(f, &app)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
     }
 
     #[test]
@@ -341,10 +482,10 @@ mod tests {
         state.findings.push(f);
         store.create(&state).unwrap();
 
-        let app = App::new(store).unwrap();
+        let mut app = App::new(store).unwrap();
         let backend = TestBackend::new(90, 34);
         let mut term = Terminal::new(backend).unwrap();
-        term.draw(|fr| ui::draw(fr, &app)).unwrap();
+        term.draw(|fr| ui::draw(fr, &mut app)).unwrap();
         println!("\n{}", buffer_text(&term));
     }
 
@@ -376,10 +517,10 @@ mod tests {
             prompt: String::new(),
         };
         store.create(&State::new(pr, session)).unwrap();
-        let app = App::new(store).unwrap();
+        let mut app = App::new(store).unwrap();
         let backend = TestBackend::new(90, 30);
         let mut term = Terminal::new(backend).unwrap();
-        term.draw(|f| ui::draw(f, &app)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
         let text = buffer_text(&term);
         assert!(
             text.contains("waiting for the agent"),
