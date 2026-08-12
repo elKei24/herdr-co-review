@@ -510,8 +510,34 @@ fn all_sessions() -> Result<Vec<(std::path::PathBuf, State)>> {
     Ok(out)
 }
 
-pub fn sessions() -> Result<()> {
+pub fn sessions(args: &SessionsArgs) -> Result<()> {
     let sessions = all_sessions()?;
+
+    if args.json {
+        let rows: Vec<serde_json::Value> = sessions
+            .iter()
+            .map(|(dir, s)| {
+                let c = s.counts();
+                serde_json::json!({
+                    "id": s.session.id,
+                    "owner": s.pr.owner,
+                    "repo": s.pr.repo,
+                    "number": s.pr.number,
+                    "status": s.status.label(),
+                    "counts": {
+                        "total": c.total, "pending": c.pending, "approved": c.approved,
+                        "dismissed": c.dismissed, "needs_discussion": c.needs_discussion,
+                        "posted": c.posted,
+                    },
+                    "session_dir": dir.display().to_string(),
+                    "worktree": s.session.worktree,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
     if sessions.is_empty() {
         println!("no co-review sessions");
         return Ok(());

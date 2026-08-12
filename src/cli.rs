@@ -62,7 +62,7 @@ pub enum Command {
     Status(SessionArgs),
 
     /// List all co-review sessions on this machine.
-    Sessions,
+    Sessions(SessionsArgs),
 
     /// Remove a co-review session and its worktree.
     End(EndArgs),
@@ -292,6 +292,13 @@ pub struct MarkPostedArgs {
     /// The URL of the posted comment.
     #[arg(long)]
     pub url: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct SessionsArgs {
+    /// Print the sessions as JSON (id, pr, status, counts, paths).
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
