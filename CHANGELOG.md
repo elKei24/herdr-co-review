@@ -1,3 +1,10 @@
+## [1.4.5](https://github.com/elKei24/herdr-co-review/compare/v1.4.4...v1.4.5) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** bump clap_mangen from 0.2.33 to 0.3.2 ([#5](https://github.com/elKei24/herdr-co-review/issues/5)) ([cbb9cd5](https://github.com/elKei24/herdr-co-review/commit/cbb9cd5802d0d6e28df6b67635c8a4f5d269e285))
+
 ## [1.4.4](https://github.com/elKei24/herdr-co-review/compare/v1.4.3...v1.4.4) (2026-08-12)
 
 
