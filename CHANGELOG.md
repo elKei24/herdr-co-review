@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/elKei24/herdr-co-review/compare/v1.4.1...v1.4.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* make the plugin work with real Herdr and harden the repo ([#1](https://github.com/elKei24/herdr-co-review/issues/1)) ([990333c](https://github.com/elKei24/herdr-co-review/commit/990333c60c4dfacc49a2bc04459ecf7e868373d9))
+
 ## [1.4.1](https://github.com/elKei24/herdr-co-review/compare/v1.4.0...v1.4.1) (2026-08-12)
 
 
