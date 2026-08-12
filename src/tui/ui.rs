@@ -9,9 +9,9 @@ use ratatui::Frame;
 
 use crate::herdr::AgentState;
 use crate::model::{Severity, Verdict};
-use crate::tui::app::{App, Input};
+use crate::tui::app::{App, Input, Pane};
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let footer_h = if app.input.is_some() { 3 } else { 1 };
     let chunks = Layout::default()
@@ -25,8 +25,9 @@ pub fn draw(f: &mut Frame, app: &App) {
         .split(size);
 
     draw_header(f, app, chunks[0]);
-    draw_list(f, app, chunks[1]);
-    draw_detail(f, app, chunks[2]);
+    let list_offset = draw_list(f, app, chunks[1]);
+    let detail_max_scroll = draw_detail(f, app, chunks[2]);
+    app.record_layout(chunks[1], chunks[2], list_offset, detail_max_scroll);
     if app.input.is_some() {
         draw_input(f, app, chunks[3]);
     } else {
@@ -97,7 +98,9 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(para, area);
 }
 
-fn draw_list(f: &mut Frame, app: &App, area: Rect) {
+/// Draws the findings list and returns the scroll offset it settled on, which is
+/// what turns a clicked row back into a finding index.
+fn draw_list(f: &mut Frame, app: &App, area: Rect) -> usize {
     let items: Vec<ListItem> = if app.state.findings.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "  waiting for the agent's findings…",
@@ -138,6 +141,7 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(focus_style(app, Pane::Findings))
         .title(" findings (j/k) ");
     let list = List::default()
         .items(items)
@@ -149,14 +153,16 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
         )
         .highlight_symbol("▌");
 
-    let mut state = ListState::default();
+    let mut state = ListState::default().with_offset(app.list_offset);
     if !app.state.findings.is_empty() {
         state.select(Some(app.selected));
     }
     f.render_stateful_widget(list, area, &mut state);
+    state.offset()
 }
 
-fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
+/// Draws the detail pane and returns the largest useful scroll offset.
+fn draw_detail(f: &mut Frame, app: &App, area: Rect) -> u16 {
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(fd) = app.state.findings.get(app.selected) {
@@ -249,12 +255,24 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(focus_style(app, Pane::Detail))
         .title(" detail & related code (J/K scroll) ");
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
     f.render_widget(para, area);
+    max_scroll
+}
+
+/// The focused pane gets a highlighted border, so it's obvious where the wheel
+/// will scroll.
+fn focus_style(app: &App, pane: Pane) -> Style {
+    if app.focus == pane {
+        Style::default().fg(Color::Rgb(130, 170, 255))
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
@@ -297,6 +315,11 @@ fn draw_help(f: &mut Frame, size: Rect) {
         Line::from("  j / k / ↓ / ↑     move between findings"),
         Line::from("  g / G             first / last finding"),
         Line::from("  J / K / PgDn/PgUp scroll the detail & code"),
+        Line::from(""),
+        Line::from("Mouse"),
+        Line::from("  click             select a finding · focus a pane (lit border)"),
+        Line::from("  wheel             scrolls the pane under the cursor"),
+        Line::from("  shift + drag      select text (the TUI grabs the mouse)"),
         Line::from(""),
         Line::from("Triage (acts on the selected finding)"),
         Line::from("  a  approve        d  dismiss"),

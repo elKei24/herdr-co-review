@@ -264,3 +264,27 @@ also prepends the launching binary's directory to PATH, so whatever copy ran
 `start` — plugin, installer, or a dev build — is the one the agent and the
 navigator find. A separate CLI install remains optional, for running `co-review`
 in shells outside a session.
+
+## 16. The navigator captures the mouse
+
+Without mouse capture the terminal translated wheel events into arrow keys, so
+the wheel always moved the findings selection and the detail/code pane — the
+larger of the two — could only be scrolled with `J`/`K`. Clicking did nothing.
+
+`co-review view` now enables mouse capture (and disables it on exit and in the
+panic hook, next to the alternate-screen teardown). A left click focuses the
+pane under it, and in the findings list also selects the row under the cursor; a
+wheel event focuses the pane it happens over and scrolls it. The focused pane
+gets a lit border so the wheel's target is never a guess.
+
+Two consequences worth knowing. The list keeps a *selection*, not a free scroll
+offset — ratatui forces the offset to keep the selection visible, so a wheel
+over the list moves the selection (exactly what `j`/`k` do) rather than
+fighting the widget. And capture takes the mouse away from the terminal's own
+text selection; `Shift`+drag is the standard escape hatch, so the help overlay
+and the README say so.
+
+Hit-testing needs the geometry that was actually painted, so `ui::draw` takes
+`&mut App` and records the two pane rects, the list's settled scroll offset, and
+the detail's maximum scroll. That also gave the detail scroll a real upper bound
+(`J` used to increment forever, and the clamp only happened at render time).

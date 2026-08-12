@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -25,6 +26,13 @@ pub enum Input {
     Chat,
 }
 
+/// Which pane the wheel scrolls. Clicking a pane makes it the focused one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Findings,
+    Detail,
+}
+
 /// A rendered related-code block for one finding location.
 pub struct CodeBlock {
     pub header: String,
@@ -42,6 +50,14 @@ pub struct App {
 
     pub selected: usize,
     pub detail_scroll: u16,
+    pub focus: Pane,
+
+    /// Geometry of the two scrollable panes and the list's scroll offset, all
+    /// written back by the renderer so mouse clicks can be mapped to a finding.
+    pub list_area: Rect,
+    pub detail_area: Rect,
+    pub list_offset: usize,
+    detail_max_scroll: u16,
 
     pub input: Option<Input>,
     pub input_buffer: String,
@@ -77,6 +93,11 @@ impl App {
             highlighter: Highlighter::new(),
             selected: 0,
             detail_scroll: 0,
+            focus: Pane::Findings,
+            list_area: Rect::default(),
+            detail_area: Rect::default(),
+            list_offset: 0,
+            detail_max_scroll: 0,
             input: None,
             input_buffer: String::new(),
             status_msg: None,
@@ -221,17 +242,88 @@ impl App {
     }
 
     fn after_move(&mut self) {
+        self.focus_pane(Pane::Findings);
         self.detail_scroll = 0;
         self.ensure_code();
         self.dirty = true;
     }
 
     pub fn scroll_detail_down(&mut self) {
-        self.detail_scroll = self.detail_scroll.saturating_add(3);
+        self.focus_pane(Pane::Detail);
+        self.detail_scroll = self
+            .detail_scroll
+            .saturating_add(3)
+            .min(self.detail_max_scroll);
+        self.dirty = true;
     }
 
     pub fn scroll_detail_up(&mut self) {
+        self.focus_pane(Pane::Detail);
         self.detail_scroll = self.detail_scroll.saturating_sub(3);
+        self.dirty = true;
+    }
+
+    /// Record what the renderer laid out, so mouse positions can be resolved
+    /// against the panes that were actually painted.
+    pub fn record_layout(
+        &mut self,
+        list_area: Rect,
+        detail_area: Rect,
+        list_offset: usize,
+        detail_max_scroll: u16,
+    ) {
+        self.list_area = list_area;
+        self.detail_area = detail_area;
+        self.list_offset = list_offset;
+        self.detail_max_scroll = detail_max_scroll;
+        self.detail_scroll = self.detail_scroll.min(detail_max_scroll);
+    }
+
+    /// The pane containing a terminal cell, if any.
+    pub fn pane_at(&self, col: u16, row: u16) -> Option<Pane> {
+        if self.list_area.contains((col, row).into()) {
+            Some(Pane::Findings)
+        } else if self.detail_area.contains((col, row).into()) {
+            Some(Pane::Detail)
+        } else {
+            None
+        }
+    }
+
+    pub fn focus_pane(&mut self, pane: Pane) {
+        if self.focus != pane {
+            self.focus = pane;
+            self.dirty = true;
+        }
+    }
+
+    /// Select the finding drawn on a terminal row of the list pane. Rows outside
+    /// the list's inner area (borders) or past the last finding are ignored.
+    pub fn select_at_row(&mut self, row: u16) {
+        let top = self.list_area.y.saturating_add(1);
+        let bottom = self.list_area.bottom().saturating_sub(1);
+        if row < top || row >= bottom {
+            return;
+        }
+        let index = self.list_offset + (row - top) as usize;
+        if index < self.state.findings.len() && index != self.selected {
+            self.selected = index;
+            self.after_move();
+        }
+    }
+
+    pub fn scroll_focus_down(&mut self) {
+        match self.focus {
+            Pane::Findings => self.select_next(),
+            Pane::Detail => self.scroll_detail_down(),
+        }
+    }
+
+    pub fn scroll_focus_up(&mut self) {
+        match self.focus {
+            Pane::Findings => self.select_prev(),
+            Pane::Detail => self.scroll_detail_up(),
+        }
     }
 
     /// Set the selected finding's verdict.
