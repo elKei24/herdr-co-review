@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/elKei24/herdr-co-review/compare/v1.1.0...v1.1.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* correct MSRV to 1.88 and enforce it in CI ([1640d4c](https://github.com/elKei24/herdr-co-review/commit/1640d4cbbebf943f4f805a85ce72cceebd1d14a4))
+
 # [1.1.0](https://github.com/elKei24/herdr-co-review/compare/v1.0.0...v1.1.0) (2026-08-12)
 
 
