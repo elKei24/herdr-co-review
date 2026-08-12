@@ -46,9 +46,7 @@ ours() {
 dir="${CO_REVIEW_INSTALL_DIR:-}"
 if [ -z "${dir}" ]; then
   for candidate in /usr/local/bin "${HOME}/.local/bin"; do
-    [ -w "${candidate}" ] || continue
-    dir="${dir:-${candidate}}"
-    if on_path "${candidate}"; then
+    if [ -w "${candidate}" ] && on_path "${candidate}"; then
       dir="${candidate}"
       break
     fi

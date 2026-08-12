@@ -93,9 +93,9 @@ installer picks the right one for your machine:
 curl -fsSL https://raw.githubusercontent.com/elKei24/herdr-co-review/main/install.sh | sh
 ```
 
-It installs to `/usr/local/bin` or `~/.local/bin`, preferring one that is
-writable and already on your PATH; set `CO_REVIEW_INSTALL_DIR` to override.
-Windows users: download the `.zip` from the releases page.
+It installs to the first of `/usr/local/bin` and `~/.local/bin` that is writable
+and on your PATH, falling back to `~/.local/bin`; set `CO_REVIEW_INSTALL_DIR` to
+override. Windows users: download the `.zip` from the releases page.
 
 ### From source
 

@@ -28,7 +28,6 @@ dir="${CO_REVIEW_INSTALL_DIR:-}"
 if [ -z "${dir}" ]; then
   for candidate in /usr/local/bin "${HOME}/.local/bin"; do
     [ -w "${candidate}" ] || continue
-    dir="${dir:-${candidate}}"
     case ":${PATH}:" in
       *":${candidate}:"*)
         dir="${candidate}"
