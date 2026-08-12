@@ -214,7 +214,8 @@ co-review post --dry-run  # show what would be posted
 
 Run `co-review doctor` to check your environment (git, herdr, agent, token), and
 `co-review completions <bash|zsh|fish|powershell|elvish>` to generate a shell
-completion script (e.g. `co-review completions zsh > ~/.zfunc/_co-review`).
+completion script (e.g. `co-review completions zsh > ~/.zfunc/_co-review`), or
+`co-review man > co-review.1` for a man page.
 
 ## Design
 

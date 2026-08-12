@@ -78,6 +78,9 @@ pub enum Command {
 
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
     Completions(CompletionsArgs),
+
+    /// Print the man page (roff) to stdout.
+    Man,
 }
 
 #[derive(Args, Debug)]

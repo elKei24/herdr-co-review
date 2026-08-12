@@ -597,6 +597,19 @@ pub fn completions(args: &CompletionsArgs) -> Result<()> {
     Ok(())
 }
 
+pub fn man() -> Result<()> {
+    use clap::CommandFactory;
+    let cmd = crate::cli::Cli::command();
+    let man = clap_mangen::Man::new(cmd);
+    let mut out = Vec::new();
+    man.render(&mut out).context("rendering man page")?;
+    use std::io::Write;
+    std::io::stdout()
+        .write_all(&out)
+        .context("writing man page")?;
+    Ok(())
+}
+
 pub fn protocol() -> Result<()> {
     print!("{}", crate::protocol::PROTOCOL_MD);
     Ok(())

@@ -340,4 +340,11 @@ fn completions_generate_for_each_shell() {
         assert!(ok, "completions {shell} failed: {err}");
         assert!(!out.trim().is_empty(), "completions {shell} were empty");
     }
+
+    let (out, err, ok) = co_review(&home, None, root.path(), &["man"]);
+    assert!(ok, "man failed: {err}");
+    assert!(
+        out.contains(".TH co-review"),
+        "man page missing roff header"
+    );
 }
