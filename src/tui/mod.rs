@@ -88,6 +88,7 @@ fn run_loop(terminal: &mut Tui, app: &mut App) -> Result<()> {
         }
 
         app.tick_status();
+        app.tick_agent();
         app.poll_reload();
 
         if app.should_quit {

@@ -180,6 +180,10 @@ The build was reviewed by an adversarial `/code-review` pass and a 4-angle
 - **TUI efficiency**: related-code blocks are memoized per finding id (git diff
   runs at most once per finding), and the event loop repaints only when a
   `dirty` flag is set instead of several times a second while idle.
+- **Live agent status** in the navigator header (working/blocked/done) is
+  best-effort: it polls `herdr agent list` every ~1.5s and leniently scans the
+  line for the agent pane. If Herdr isn't present or the format differs, it shows
+  nothing rather than erroring — so it can only add signal, never break the UI.
 
 ## 12. Prebuilt binaries, and a plugin that doesn't need Rust
 

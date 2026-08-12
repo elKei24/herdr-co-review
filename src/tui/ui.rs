@@ -50,14 +50,20 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         )
     };
 
-    let line2 = Line::from(vec![
-        Span::styled(
-            format!(" {} ", s.status.label()),
-            Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
+    let mut spans = vec![Span::styled(
+        format!(" {} ", s.status.label()),
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if let Some(agent) = app.agent_state() {
+        spans.push(Span::styled(
+            format!(" agent: {agent} "),
+            Style::default().fg(agent_state_color(agent)),
+        ));
+    }
+    spans.extend([
         Span::raw(format!("  {} findings", c.total)),
         Span::styled(
             format!("  {} pending", c.pending),
@@ -76,6 +82,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Cyan),
         ),
     ]);
+    let line2 = Line::from(spans);
 
     let block = Block::default().borders(Borders::ALL).title(" co-review ");
     let para = Paragraph::new(vec![
@@ -320,6 +327,16 @@ fn draw_help(f: &mut Frame, size: Rect) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn agent_state_color(state: &str) -> Color {
+    match state {
+        "working" | "running" | "thinking" => Color::Green,
+        "blocked" | "waiting" => Color::Yellow,
+        "error" => Color::Red,
+        "done" => Color::Cyan,
+        _ => Color::Gray,
+    }
 }
 
 fn severity_color(s: Severity) -> Color {

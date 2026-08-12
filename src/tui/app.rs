@@ -54,6 +54,11 @@ pub struct App {
     /// Highlighted related-code blocks, memoized per finding id so navigating the
     /// list re-runs the (subprocess-backed) git diff at most once per finding.
     code_cache: HashMap<String, Vec<CodeBlock>>,
+
+    /// Best-effort agent state from Herdr (working/blocked/done/…), shown in the
+    /// header. `None` when unknown or Herdr can't report it.
+    agent_state: Option<String>,
+    last_agent_poll: Instant,
 }
 
 impl App {
@@ -77,6 +82,8 @@ impl App {
             should_quit: false,
             dirty: true,
             code_cache: HashMap::new(),
+            agent_state: None,
+            last_agent_poll: Instant::now(),
         };
         app.reconcile_selection(None);
         app.ensure_code();
@@ -95,6 +102,28 @@ impl App {
     fn set_status(&mut self, msg: impl Into<String>) {
         self.status_msg = Some((msg.into(), Instant::now()));
         self.dirty = true;
+    }
+
+    /// The best-effort agent state to show in the header, if known.
+    pub fn agent_state(&self) -> Option<&str> {
+        self.agent_state.as_deref()
+    }
+
+    /// Periodically refresh the agent's Herdr state (working/blocked/done). Cheap
+    /// and best-effort; does nothing if there's no agent pane or Herdr can't say.
+    pub fn tick_agent(&mut self) {
+        if self.last_agent_poll.elapsed() < Duration::from_millis(1500) {
+            return;
+        }
+        self.last_agent_poll = Instant::now();
+        let Some(pane) = self.state.session.agent_pane_id.clone() else {
+            return;
+        };
+        let next = self.herdr.agent_state(&pane);
+        if next != self.agent_state {
+            self.agent_state = next;
+            self.dirty = true;
+        }
     }
 
     /// Expire a transient status message after a few seconds.

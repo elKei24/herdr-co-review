@@ -166,6 +166,35 @@ impl Herdr {
         self.pane_send_text(pane, text)?;
         self.pane_send_keys(pane, &["Enter"])
     }
+
+    /// Best-effort: ask Herdr for the state of the agent running in `pane`
+    /// (e.g. "working", "blocked", "done"). Returns `None` if Herdr is
+    /// unavailable or the state can't be determined — callers should treat the
+    /// absence as "unknown" and show nothing.
+    pub fn agent_state(&self, pane: &str) -> Option<String> {
+        if self.dry_run {
+            return None;
+        }
+        let out = exec::capture(&self.bin, &["agent", "list"], None).ok()?;
+        parse_agent_state(&out, pane)
+    }
+}
+
+/// Scan `herdr agent list` output for the state keyword on the line mentioning
+/// `pane`. Deliberately lenient about the exact output format.
+fn parse_agent_state(list: &str, pane: &str) -> Option<String> {
+    const STATES: [&str; 8] = [
+        "working", "blocked", "waiting", "thinking", "running", "done", "idle", "error",
+    ];
+    for line in list.lines() {
+        if line.contains(pane) {
+            let lower = line.to_ascii_lowercase();
+            if let Some(state) = STATES.iter().find(|s| lower.contains(**s)) {
+                return Some((*state).to_string());
+            }
+        }
+    }
+    None
 }
 
 fn env_flag(name: &str) -> bool {
@@ -365,6 +394,20 @@ mod tests {
             build_pane_run_args("w1:p2", "co-review view"),
             vec!["pane", "run", "w1:p2", "co-review view"]
         );
+    }
+
+    #[test]
+    fn parses_agent_state_leniently() {
+        let listing = "\
+w1:p1  claude   working   PR review
+w1:p2  co-review view  idle";
+        assert_eq!(
+            parse_agent_state(listing, "w1:p1").as_deref(),
+            Some("working")
+        );
+        assert_eq!(parse_agent_state(listing, "w1:p2").as_deref(), Some("idle"));
+        assert_eq!(parse_agent_state(listing, "w9:p9"), None);
+        assert_eq!(parse_agent_state("no state here for w1:p1", "w1:p1"), None);
     }
 
     #[test]
