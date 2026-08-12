@@ -330,3 +330,29 @@ a real `co-review uninstall`. It is the better home for install *policy*, but
 it grows the agent-facing CLI contract (which every subcommand must document
 and test) for a step that runs twice in a plugin's life. Reconsider if the
 receipt is ever needed for something else.
+
+## 18. The plugin builds in a staging checkout — link to the final path
+
+Decision 17 shipped with a bug: `herdr plugin install` runs the build step in
+`<plugins>/.tmp-install-<pid>-<ms>/checkout/` and only *afterwards* moves that
+checkout to its final home, so the symlink — resolved from the binary's path at
+build time — dangled after every real plugin install (caught by the user right
+after updating; the tests had only exercised final-looking paths).
+
+The build step gets no `HERDR_PLUGIN_*` environment and no manifest field names
+the destination (verified on 0.8.0 by dumping the build environment), so the
+final path cannot be read — but it can be computed: the installed plugin lives
+at `<plugins>/github/<id>-<hash>/` where `<hash>` is the first 12 hex digits of
+`sha256(<id>)`, verified against both plugins installed on the reporting
+machine. `link-on-path.sh` now detects the staging pattern in the binary's
+path, reads the id from the checkout's own manifest, and links to the computed
+final location; anywhere else (dev checkout, standalone run) it links to the
+real path as before.
+
+That hash scheme is a herdr internal and could change. The failure mode is the
+one decision 17 already repairs — a dangling link that `doctor` reports and the
+next install replaces — and the link self-corrects with every plugin update, so
+the guess is cheap to be wrong about. The alternative, a wrapper script that
+globs `<plugins>/github/<id>-*/` at run time, would survive a hash change but
+turns the PATH entry into a file the ownership checks cannot distinguish from a
+user-installed binary; decision 17's reasons for a symlink stand.

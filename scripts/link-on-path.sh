@@ -15,6 +15,32 @@ if [ -z "${src}" ] || [ ! -x "${src}" ]; then
 fi
 src="$(cd "$(dirname "${src}")" && pwd)/$(basename "${src}")"
 
+sha256_12() {
+  { command -v sha256sum >/dev/null 2>&1 \
+    && printf %s "$1" | sha256sum \
+    || printf %s "$1" | shasum -a 256; } | cut -c1-12
+}
+
+# `herdr plugin install` runs the build in <plugins>/.tmp-install-*/checkout and
+# moves that checkout to <plugins>/github/<id>-<sha256(id)[:12]> afterwards
+# (verified on 0.8.0), so a link to the build-time path would dangle. Point at
+# the final location instead. Should herdr ever change this scheme, the link
+# dangles — `doctor` reports that and the next install replaces it.
+case "${src}" in
+  */plugins/.tmp-install-*/checkout/*)
+    plugins="${src%%/.tmp-install-*}"
+    rel="${src#*/.tmp-install-*/checkout/}"
+    checkout="${src%/${rel}}"
+    id="$(sed -n 's/^id[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "${checkout}/herdr-plugin.toml" 2>/dev/null | head -n 1)"
+    if [ -n "${id}" ]; then
+      src="${plugins}/github/${id}-$(sha256_12 "${id}")/${rel}"
+    else
+      echo "warning: cannot read the plugin id from ${checkout}/herdr-plugin.toml;" >&2
+      echo "         the PATH link will dangle once herdr moves this staging checkout." >&2
+    fi
+    ;;
+esac
+
 if [ -n "${CO_REVIEW_NO_PATH_LINK:-}" ]; then
   echo "CO_REVIEW_NO_PATH_LINK is set; leaving PATH alone (binary: ${src})"
   exit 0
