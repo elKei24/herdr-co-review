@@ -12,17 +12,18 @@ min_herdr_version = "0.8.0"
 description = "Interactive, split-screen PR co-review between you and your AI agent."
 platforms = ["linux", "macos"]
 
-# Build the binary on install. The action/link commands below reference it by the
-# path Cargo produces, relative to the plugin root.
+# On install, put a `co-review` binary in bin/: download the prebuilt release
+# asset for this platform, or fall back to `cargo build` if Rust is available.
+# So installing the plugin does not require a Rust toolchain.
 [[build]]
-command = ["cargo", "build", "--release"]
+command = ["bash", "scripts/install-binary.sh"]
 
 # Invoked by the link handler; reads the clicked PR URL from the environment.
 [[actions]]
 id = "start-from-url"
 title = "Co-review this pull request"
 contexts = ["workspace", "pane"]
-command = ["target/release/co-review", "start"]
+command = ["bin/co-review", "start"]
 
 # Ctrl+click a GitHub PR URL anywhere to start a co-review for it.
 [[link_handlers]]

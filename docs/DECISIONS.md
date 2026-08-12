@@ -180,3 +180,22 @@ The build was reviewed by an adversarial `/code-review` pass and a 4-angle
 - **TUI efficiency**: related-code blocks are memoized per finding id (git diff
   runs at most once per finding), and the event loop repaints only when a
   `dirty` flag is set instead of several times a second while idle.
+
+## 12. Prebuilt binaries, and a plugin that doesn't need Rust
+
+Users shouldn't have to compile the tool. The release runs in two stages:
+semantic-release computes the version, bumps `Cargo.toml`/lock/CHANGELOG, tags,
+and creates the GitHub release (stage 1); a cross-platform matrix then builds a
+binary for each target from that tag and uploads it to the release (stage 2,
+gated on stage 1 having published — the version flows between stages via the
+exec plugin's `successCmd` writing to `$GITHUB_OUTPUT`). Assets are named without
+the version (`co-review-<target>.tar.gz`) so the stable
+`releases/latest/download/<asset>` URL works.
+
+The Herdr plugin's install step therefore runs `scripts/install-binary.sh`, which
+**downloads** the right prebuilt asset for the platform and only falls back to
+`cargo build` if none is available — so installing the plugin needs no Rust
+toolchain. Targets: linux and macOS (x86_64 + aarch64) and Windows x86_64;
+linux-aarch64 cross-compiles on the ubuntu runner with the
+`gcc-aarch64-linux-gnu` linker (the crate is pure-Rust: rustls, `fancy-regex`
+instead of `onig`, no other C deps).

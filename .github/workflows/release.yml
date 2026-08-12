@@ -14,14 +14,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Stage 1: figure out the next version, update Cargo.toml/lock/CHANGELOG, tag,
+  # and create the GitHub release (binaries are attached in stage 2).
   release:
     name: semantic-release
     runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.semantic.outputs.released }}
+      tag: ${{ steps.semantic.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: false
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
@@ -30,6 +34,72 @@ jobs:
           node-version: 20
       - run: npm ci
       - name: Release
+        id: semantic
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
+
+  # Stage 2: build a binary for each platform from the freshly-tagged commit and
+  # upload it to the release. Runs only when stage 1 actually published one.
+  binaries:
+    name: ${{ matrix.target }}
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            ext: tar.gz
+            apt: gcc-aarch64-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cross linker
+        if: matrix.apt != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+      - name: Build
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package
+        id: pkg
+        shell: bash
+        run: |
+          # Stable, version-less asset names so the install script can use the
+          # `releases/latest/download/<name>` URL.
+          name="co-review-${{ matrix.target }}"
+          reldir="target/${{ matrix.target }}/release"
+          mkdir -p dist
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            7z a "dist/${name}.zip" "./${reldir}/co-review.exe" >/dev/null
+          else
+            tar -C "${reldir}" -czf "dist/${name}.tar.gz" co-review
+          fi
+          echo "asset=dist/${name}.${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release.outputs.tag }}
+          files: ${{ steps.pkg.outputs.asset }}

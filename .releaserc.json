@@ -9,19 +9,12 @@
     ],
     [
       "@semantic-release/exec",
-      { "prepareCmd": "bash ci/prepare-release.sh ${nextRelease.version}" }
-    ],
-    [
-      "@semantic-release/github",
       {
-        "assets": [
-          {
-            "path": "dist/co-review-*-x86_64-unknown-linux-gnu.tar.gz",
-            "label": "co-review (linux x86_64)"
-          }
-        ]
+        "prepareCmd": "bash ci/prepare-release.sh ${nextRelease.version}",
+        "successCmd": "printf 'released=true\\ntag=v%s\\n' \"${nextRelease.version}\" >> \"$GITHUB_OUTPUT\""
       }
     ],
+    "@semantic-release/github",
     [
       "@semantic-release/git",
       {
