@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/elKei24/herdr-co-review/compare/v1.6.0...v1.6.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **install:** plugin PATH link no longer dangles after install ([#14](https://github.com/elKei24/herdr-co-review/issues/14)) ([9d272d2](https://github.com/elKei24/herdr-co-review/commit/9d272d249d8bd1eb3a01d6f4bd756f7cad63360a)), closes [#13](https://github.com/elKei24/herdr-co-review/issues/13)
+
 # [1.6.0](https://github.com/elKei24/herdr-co-review/compare/v1.5.3...v1.6.0) (2026-08-12)
 
 
