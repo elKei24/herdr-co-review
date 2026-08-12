@@ -252,3 +252,15 @@ a `RELEASE_DEPLOY_KEY` deploy key (which can bypass a branch ruleset once one
 exists — rulesets need the repo to be public or on GitHub Pro). With the secret
 unset, checkout falls back to token auth, so the pipeline still works before
 the key is configured.
+
+## 15. Sessions put the launching binary on the panes' PATH
+
+The prompt and protocol tell the agent to run bare `co-review …`, but a
+plugin-only install keeps the binary private under the plugin root — the agent's
+first `add-finding` would die with "command not found" (caught by the user right
+after install; the live e2e had missed it by always using absolute paths). The
+fix is in the layout, not the docs: the `env` prefix on both pane commands now
+also prepends the launching binary's directory to PATH, so whatever copy ran
+`start` — plugin, installer, or a dev build — is the one the agent and the
+navigator find. A separate CLI install remains optional, for running `co-review`
+in shells outside a session.

@@ -9,3 +9,4 @@ Cargo.lock.orig
 
 # co-review local state / worktrees (should never be committed)
 /.co-review/
+.claude/worktrees/

@@ -117,6 +117,11 @@ You get a "Co-review this pull request" action and a GitHub-PR link handler
 (Ctrl+click a PR URL to start a review). Manifest:
 [`herdr-plugin.toml`](./herdr-plugin.toml).
 
+The plugin is self-contained: review sessions put its private binary on the
+panes' PATH, so the agent's `co-review` commands work without any further
+install. Install the CLI (see above) only if you also want to run `co-review`
+from your own shells.
+
 ## Usage
 
 From inside your repository checkout:
