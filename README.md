@@ -105,13 +105,17 @@ cargo install --git https://github.com/elKei24/herdr-co-review
 
 ### As a Herdr plugin
 
-Point Herdr's plugin installer at this repo (manifest:
-[`herdr-plugin.toml`](./herdr-plugin.toml)). Its install step runs
+```sh
+herdr plugin install elKei24/herdr-co-review     # or: herdr plugin link /path/to/checkout
+```
+
+The plugin's install step runs
 [`scripts/install-binary.sh`](./scripts/install-binary.sh), which **downloads the
 prebuilt binary** for your platform (falling back to `cargo build` only if no
 release asset is available) — so installing the plugin needs no Rust toolchain.
-You get a "Co-review this pull request" action and a GitHub-PR link handler:
-Ctrl+click a PR URL to start a review.
+You get a "Co-review this pull request" action and a GitHub-PR link handler
+(Ctrl+click a PR URL to start a review). Manifest:
+[`herdr-plugin.toml`](./herdr-plugin.toml).
 
 ## Usage
 
