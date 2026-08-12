@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/elKei24/herdr-co-review/compare/v1.3.0...v1.4.0) (2026-08-12)
+
+
+### Features
+
+* show live agent status in the navigator header ([1373c11](https://github.com/elKei24/herdr-co-review/commit/1373c1169f9c5679ebc6e7c44cb6c27bf19ac74f))
+
 # [1.3.0](https://github.com/elKei24/herdr-co-review/compare/v1.2.0...v1.3.0) (2026-08-12)
 
 
