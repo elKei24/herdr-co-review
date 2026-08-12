@@ -349,8 +349,10 @@ fn launch_layout(plan: &LayoutPlan, store: &Store) -> Result<()> {
     }
 
     // Persist pane ids as soon as each is created, so a later failure still
-    // leaves the workspace recorded (and thus cleanable via `co-review end`)
-    // rather than orphaned.
+    // leaves the workspace recorded — `co-review end --force` can then prune the
+    // (possibly half-created) panes rather than orphaning them. `end` requires
+    // --force here on purpose: with pane ids recorded we can't tell a
+    // half-launched session from a live one, so we don't wipe it silently.
     let ws = herdr.workspace_create(&plan.worktree, &plan.label)?;
     let agent_pane = ws.first_pane.clone();
     store.update(|s| {

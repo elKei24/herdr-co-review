@@ -417,9 +417,10 @@ pub fn post(args: &PostArgs) -> Result<()> {
             start_line: Some(loc.start_line),
             side: loc.side,
         };
-        // Only fall back to a general PR comment when GitHub rejects the *line*
-        // (422 — the line isn't part of the diff). Transient/auth failures
-        // propagate so the post can be retried instead of being downgraded.
+        // Fall back to a general PR comment when GitHub rejects the *line* (422 —
+        // the line isn't part of the diff). Other failures (transient/auth) skip
+        // just this finding and continue, so one blip doesn't abandon the rest of
+        // the batch; the finding stays un-posted and a re-run of `post` retries it.
         let url = match client.post_review_comment(&state.pr, &comment) {
             Ok(url) => url,
             Err(e) if line_not_in_diff(&e) => {
@@ -431,9 +432,21 @@ pub fn post(args: &PostArgs) -> Result<()> {
                     render_comment_body(f, false),
                     loc.label()
                 );
-                client.post_issue_comment(&state.pr, &body)?
+                match client.post_issue_comment(&state.pr, &body) {
+                    Ok(url) => url,
+                    Err(e2) => {
+                        eprintln!("{}: PR comment also failed ({e2:#}); skipping", f.id);
+                        continue;
+                    }
+                }
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                eprintln!(
+                    "{}: post failed ({e:#}); skipping — re-run `post` to retry",
+                    f.id
+                );
+                continue;
+            }
         };
         store.update(|st| {
             if let Some(ff) = st.finding_mut(&f.id) {
@@ -457,8 +470,10 @@ pub fn post(args: &PostArgs) -> Result<()> {
 }
 
 /// Whether a post error is GitHub's "line isn't part of the diff" rejection.
+/// Uses the alternate format so the *whole* context chain (including the wrapped
+/// "GitHub API returned 422: …") is inspected, not just the outermost message.
 fn line_not_in_diff(e: &anyhow::Error) -> bool {
-    e.to_string().contains("422")
+    format!("{e:#}").contains("422")
 }
 
 /// Render the markdown body posted to GitHub for a finding. `applyable_suggestion`

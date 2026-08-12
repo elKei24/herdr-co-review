@@ -180,17 +180,24 @@ impl Herdr {
     }
 }
 
-/// Scan `herdr agent list` output for the state keyword on the line mentioning
-/// `pane`. Deliberately lenient about the exact output format.
+/// Scan `herdr agent list` output for the state of the agent on the line
+/// mentioning `pane`. Matches on whole whitespace-separated tokens (not
+/// substrings) so a description word can't be mistaken for a status, and is
+/// otherwise lenient about the exact column layout.
 fn parse_agent_state(list: &str, pane: &str) -> Option<String> {
     const STATES: [&str; 8] = [
         "working", "blocked", "waiting", "thinking", "running", "done", "idle", "error",
     ];
     for line in list.lines() {
-        if line.contains(pane) {
-            let lower = line.to_ascii_lowercase();
-            if let Some(state) = STATES.iter().find(|s| lower.contains(**s)) {
-                return Some((*state).to_string());
+        if !line.split_whitespace().any(|tok| tok == pane) {
+            continue;
+        }
+        for tok in line.split_whitespace() {
+            let t = tok
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_ascii_lowercase();
+            if STATES.contains(&t.as_str()) {
+                return Some(t);
             }
         }
     }

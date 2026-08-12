@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -55,10 +56,11 @@ pub struct App {
     /// list re-runs the (subprocess-backed) git diff at most once per finding.
     code_cache: HashMap<String, Vec<CodeBlock>>,
 
-    /// Best-effort agent state from Herdr (working/blocked/done/…), shown in the
-    /// header. `None` when unknown or Herdr can't report it.
-    agent_state: Option<String>,
-    last_agent_poll: Instant,
+    /// Best-effort agent state from Herdr (working/blocked/done/…). A background
+    /// thread writes here so the (potentially slow) `herdr agent list` subprocess
+    /// never blocks the render loop; `agent_state_shown` is the UI-thread copy.
+    agent_state: Arc<Mutex<Option<String>>>,
+    agent_state_shown: Option<String>,
 }
 
 impl App {
@@ -82,12 +84,39 @@ impl App {
             should_quit: false,
             dirty: true,
             code_cache: HashMap::new(),
-            agent_state: None,
-            last_agent_poll: Instant::now(),
+            agent_state: Arc::new(Mutex::new(None)),
+            agent_state_shown: None,
         };
         app.reconcile_selection(None);
         app.ensure_code();
+        app.spawn_agent_poller();
         Ok(app)
+    }
+
+    /// Poll the agent's Herdr state on a background thread (best-effort) so the
+    /// render loop never blocks on the subprocess. The thread ends with the
+    /// process. No-op without an agent pane or a real Herdr.
+    fn spawn_agent_poller(&self) {
+        if self.herdr.is_dry_run() {
+            return;
+        }
+        let Some(pane) = self.state.session.agent_pane_id.clone() else {
+            return;
+        };
+        let shared = Arc::clone(&self.agent_state);
+        std::thread::spawn(move || {
+            let herdr = Herdr::new(false);
+            if !herdr.available() {
+                return;
+            }
+            loop {
+                let next = herdr.agent_state(&pane);
+                if let Ok(mut guard) = shared.lock() {
+                    *guard = next;
+                }
+                std::thread::sleep(Duration::from_millis(1500));
+            }
+        });
     }
 
     /// The currently selected finding id, if any.
@@ -106,22 +135,14 @@ impl App {
 
     /// The best-effort agent state to show in the header, if known.
     pub fn agent_state(&self) -> Option<&str> {
-        self.agent_state.as_deref()
+        self.agent_state_shown.as_deref()
     }
 
-    /// Periodically refresh the agent's Herdr state (working/blocked/done). Cheap
-    /// and best-effort; does nothing if there's no agent pane or Herdr can't say.
+    /// Pick up the latest agent state from the background poller (non-blocking).
     pub fn tick_agent(&mut self) {
-        if self.last_agent_poll.elapsed() < Duration::from_millis(1500) {
-            return;
-        }
-        self.last_agent_poll = Instant::now();
-        let Some(pane) = self.state.session.agent_pane_id.clone() else {
-            return;
-        };
-        let next = self.herdr.agent_state(&pane);
-        if next != self.agent_state {
-            self.agent_state = next;
+        let latest = self.agent_state.lock().ok().and_then(|g| g.clone());
+        if latest != self.agent_state_shown {
+            self.agent_state_shown = latest;
             self.dirty = true;
         }
     }
