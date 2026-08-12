@@ -81,7 +81,10 @@ jobs:
       - name: Build
         shell: bash
         env:
+          # Cross-compile toolchain for the aarch64-linux leg (ring needs a C
+          # compiler for the target). Ignored by the native legs.
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }}
       - name: Package
         id: pkg
