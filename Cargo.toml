@@ -22,7 +22,7 @@ path = "src/main.rs"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 crossterm = "0.28"
 directories = "6"
 fs4 = { version = "0.13", features = ["sync"] }
