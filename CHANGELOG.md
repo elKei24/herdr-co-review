@@ -1,3 +1,15 @@
+# [1.5.0](https://github.com/elKei24/herdr-co-review/compare/v1.4.5...v1.5.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** bump toml from 0.8.23 to 1.1.4+spec-1.1.0 ([#3](https://github.com/elKei24/herdr-co-review/issues/3)) ([7d1d0bd](https://github.com/elKei24/herdr-co-review/commit/7d1d0bdb793feed2fd29e9949f7ab506301e396c))
+
+
+### Features
+
+* **tui:** click to select findings and choose what the wheel scrolls ([#10](https://github.com/elKei24/herdr-co-review/issues/10)) ([faf7a5a](https://github.com/elKei24/herdr-co-review/commit/faf7a5a9db863e7c123f3c92031aa64d2dee1161))
+
 ## [1.4.5](https://github.com/elKei24/herdr-co-review/compare/v1.4.4...v1.4.5) (2026-08-12)
 
 
