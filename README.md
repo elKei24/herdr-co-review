@@ -86,16 +86,16 @@ else works without it). You do **not** need Rust unless you build from source.
 ### Prebuilt binary (recommended)
 
 Every release ships binaries for Linux and macOS (x86_64 and aarch64) and Windows
-(x86_64) at [Releases](https://github.com/elKei24/herdr-co-review/releases). Grab
-one, or let this one-liner pick the right archive for your machine:
+(x86_64) at [Releases](https://github.com/elKei24/herdr-co-review/releases). The
+installer picks the right one for your machine:
 
 ```sh
-# Linux/macOS — installs to /usr/local/bin (needs write access; use sudo if so)
-target="$(uname -m | sed 's/arm64/aarch64/;s/amd64/x86_64/')-$(uname -s | \
-  sed 's/Linux/unknown-linux-gnu/;s/Darwin/apple-darwin/')"
-curl -fsSL "https://github.com/elKei24/herdr-co-review/releases/latest/download/co-review-${target}.tar.gz" \
-  | tar -xz -C /usr/local/bin co-review
+curl -fsSL https://raw.githubusercontent.com/elKei24/herdr-co-review/main/install.sh | sh
 ```
+
+It installs to `/usr/local/bin` (if writable) or `~/.local/bin`; set
+`CO_REVIEW_INSTALL_DIR` to override. Windows users: download the `.zip` from the
+releases page.
 
 ### From source
 
