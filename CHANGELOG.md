@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/elKei24/herdr-co-review/compare/v1.5.3...v1.6.0) (2026-08-12)
+
+
+### Features
+
+* **install:** put co-review on the PATH with the Herdr plugin ([#13](https://github.com/elKei24/herdr-co-review/issues/13)) ([eb5111f](https://github.com/elKei24/herdr-co-review/commit/eb5111fbb2138055efde7d32587d748c65c51d56))
+
 ## [1.5.3](https://github.com/elKei24/herdr-co-review/compare/v1.5.2...v1.5.3) (2026-08-12)
 
 
