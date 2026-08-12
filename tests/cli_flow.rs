@@ -330,3 +330,14 @@ fn doctor_runs_without_a_session() {
     assert!(ok, "doctor should succeed");
     assert!(out.contains("co-review"));
 }
+
+#[test]
+fn completions_generate_for_each_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+        let (out, err, ok) = co_review(&home, None, root.path(), &["completions", shell]);
+        assert!(ok, "completions {shell} failed: {err}");
+        assert!(!out.trim().is_empty(), "completions {shell} were empty");
+    }
+}

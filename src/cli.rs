@@ -75,6 +75,15 @@ pub enum Command {
 
     /// Diagnose the environment (git, herdr, token, config).
     Doctor,
+
+    /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
+    Completions(CompletionsArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct CompletionsArgs {
+    /// The shell to generate completions for.
+    pub shell: clap_complete::Shell,
 }
 
 /// Selects which session a command operates on.

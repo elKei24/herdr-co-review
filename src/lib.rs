@@ -53,5 +53,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Protocol => commands::protocol(),
         Command::Prompt => commands::prompt(),
         Command::Doctor => commands::doctor(),
+        Command::Completions(args) => commands::completions(args),
     }
 }

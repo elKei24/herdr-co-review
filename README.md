@@ -212,7 +212,9 @@ co-review post            # posts approved/edited findings as inline PR comments
 co-review post --dry-run  # show what would be posted
 ```
 
-Run `co-review doctor` to check your environment (git, herdr, agent, token).
+Run `co-review doctor` to check your environment (git, herdr, agent, token), and
+`co-review completions <bash|zsh|fish|powershell|elvish>` to generate a shell
+completion script (e.g. `co-review completions zsh > ~/.zfunc/_co-review`).
 
 ## Design
 

@@ -589,6 +589,14 @@ pub fn end(args: &EndArgs) -> Result<()> {
     Ok(())
 }
 
+pub fn completions(args: &CompletionsArgs) -> Result<()> {
+    use clap::CommandFactory;
+    let mut cmd = crate::cli::Cli::command();
+    let name = cmd.get_name().to_string();
+    clap_complete::generate(args.shell, &mut cmd, name, &mut std::io::stdout());
+    Ok(())
+}
+
 pub fn protocol() -> Result<()> {
     print!("{}", crate::protocol::PROTOCOL_MD);
     Ok(())
