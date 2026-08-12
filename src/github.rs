@@ -5,8 +5,12 @@
 //! and response parsing are pure functions so they can be unit-tested without a
 //! network.
 
+use std::time::Duration;
+
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
+use ureq::http::Response;
+use ureq::{Agent, Body};
 
 use crate::model::{PrInfo, Side};
 
@@ -36,13 +40,32 @@ pub fn resolve_token() -> Option<String> {
     None
 }
 
+/// An agent pinned to ureq 2's defaults, which ureq 3 changed: it no longer
+/// bounds connect time, allows twice as many redirects, and turns a non-2xx
+/// status into an `Err` that has already dropped the response body — but we need
+/// that body to surface GitHub's own error message.
+fn agent() -> Agent {
+    Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .max_redirects(5)
+        .max_redirects_will_error(false)
+        .proxy(None)
+        .build()
+        .into()
+}
+
 pub struct Client {
     token: String,
+    agent: Agent,
 }
 
 impl Client {
     pub fn new(token: String) -> Self {
-        Client { token }
+        Client {
+            token,
+            agent: agent(),
+        }
     }
 
     /// Construct from the ambient token, erroring with guidance if none is found.
@@ -56,27 +79,26 @@ impl Client {
     }
 
     fn get(&self, url: &str) -> Result<serde_json::Value> {
-        let resp = ureq::get(url)
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Accept", ACCEPT)
-            .set("X-GitHub-Api-Version", API_VERSION)
-            .set("User-Agent", USER_AGENT)
+        let resp = self
+            .headers(self.agent.get(url))
             .call()
             .map_err(map_ureq_error)?;
-        resp.into_json::<serde_json::Value>()
-            .context("parsing GitHub JSON response")
+        read_json(resp)
     }
 
     fn post(&self, url: &str, body: serde_json::Value) -> Result<serde_json::Value> {
-        let resp = ureq::post(url)
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Accept", ACCEPT)
-            .set("X-GitHub-Api-Version", API_VERSION)
-            .set("User-Agent", USER_AGENT)
+        let resp = self
+            .headers(self.agent.post(url))
             .send_json(body)
             .map_err(map_ureq_error)?;
-        resp.into_json::<serde_json::Value>()
-            .context("parsing GitHub JSON response")
+        read_json(resp)
+    }
+
+    fn headers<B>(&self, req: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        req.header("Authorization", format!("Bearer {}", self.token))
+            .header("Accept", ACCEPT)
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .header("User-Agent", USER_AGENT)
     }
 
     /// Fetch PR metadata and merge it into a [`PrInfo`].
@@ -200,15 +222,26 @@ fn parse_pr(owner: &str, repo: &str, number: u64, v: &serde_json::Value) -> Resu
     })
 }
 
-fn map_ureq_error(e: ureq::Error) -> anyhow::Error {
-    match e {
-        ureq::Error::Status(code, resp) => {
-            let body = resp.into_string().unwrap_or_default();
-            let detail = extract_github_message(&body).unwrap_or(body);
-            anyhow!("GitHub API returned {code}: {}", detail.trim())
-        }
-        ureq::Error::Transport(t) => anyhow!("GitHub API transport error: {t}"),
+/// Read a response body, turning a 4xx/5xx into the error message the rest of
+/// the tool matches on (`post` keys its inline-comment fallback off the 422).
+fn read_json(mut resp: Response<Body>) -> Result<serde_json::Value> {
+    let status = resp.status();
+    if status.is_client_error() || status.is_server_error() {
+        let body = resp.body_mut().read_to_string().unwrap_or_default();
+        let detail = extract_github_message(&body).unwrap_or(body);
+        return Err(anyhow!(
+            "GitHub API returned {}: {}",
+            status.as_u16(),
+            detail.trim()
+        ));
     }
+    resp.body_mut()
+        .read_json::<serde_json::Value>()
+        .context("parsing GitHub JSON response")
+}
+
+fn map_ureq_error(e: ureq::Error) -> anyhow::Error {
+    anyhow!("GitHub API transport error: {e}")
 }
 
 fn extract_github_message(body: &str) -> Option<String> {
