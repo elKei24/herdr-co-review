@@ -1,3 +1,10 @@
+## [1.4.3](https://github.com/elKei24/herdr-co-review/compare/v1.4.2...v1.4.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* make the agent find co-review with a plugin-only install ([#8](https://github.com/elKei24/herdr-co-review/issues/8)) ([929e2f6](https://github.com/elKei24/herdr-co-review/commit/929e2f6f173a0cadb395a8f7107afc3635c314c9))
+
 ## [1.4.2](https://github.com/elKei24/herdr-co-review/compare/v1.4.1...v1.4.2) (2026-08-12)
 
 
