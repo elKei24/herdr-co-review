@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/elKei24/herdr-co-review/compare/v1.2.0...v1.3.0) (2026-08-12)
+
+
+### Features
+
+* sessions --json for scripting ([63ce614](https://github.com/elKei24/herdr-co-review/commit/63ce6146766b7b12986d88d09dec2d1411a2673f))
+
 # [1.2.0](https://github.com/elKei24/herdr-co-review/compare/v1.1.1...v1.2.0) (2026-08-12)
 
 
