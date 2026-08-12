@@ -79,12 +79,7 @@ fn run_loop(terminal: &mut Tui, app: &mut App) -> Result<()> {
         }
 
         if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Release {
-                    handle_key(app, key);
-                    app.dirty = true;
-                }
-            }
+            handle_event(app, event::read()?);
         }
 
         app.tick_status();
@@ -94,6 +89,19 @@ fn run_loop(terminal: &mut Tui, app: &mut App) -> Result<()> {
         if app.should_quit {
             return Ok(());
         }
+    }
+}
+
+fn handle_event(app: &mut App, ev: Event) {
+    match ev {
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
+            handle_key(app, key);
+            app.dirty = true;
+        }
+        // `Terminal::draw` is what reflows the buffers to the new size, so a
+        // resize has to request a repaint or the pane keeps the old geometry.
+        Event::Resize(..) => app.dirty = true,
+        _ => {}
     }
 }
 
@@ -230,6 +238,26 @@ mod tests {
         );
         assert!(text.contains("HIGH"), "severity missing");
         assert!(text.contains("pending"), "verdict badge missing");
+    }
+
+    #[test]
+    fn resize_event_marks_the_tui_for_repaint() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        let mut app = App::new(store).unwrap();
+        app.dirty = false;
+        handle_event(&mut app, Event::Resize(120, 40));
+        assert!(app.dirty, "a resize must trigger a repaint");
+    }
+
+    #[test]
+    fn renders_in_a_narrow_short_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        let app = App::new(store).unwrap();
+        let backend = TestBackend::new(40, 12);
+        let mut term = Terminal::new(backend).unwrap();
+        term.draw(|f| ui::draw(f, &app)).unwrap();
     }
 
     #[test]
