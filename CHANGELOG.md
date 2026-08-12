@@ -1,3 +1,11 @@
+# [1.2.0](https://github.com/elKei24/herdr-co-review/compare/v1.1.1...v1.2.0) (2026-08-12)
+
+
+### Features
+
+* man page generation (co-review man) ([b699b7b](https://github.com/elKei24/herdr-co-review/commit/b699b7b63665a5b97ec68f21e4564852f5bd922a))
+* shell completion generation (co-review completions <shell>) ([a0c17c3](https://github.com/elKei24/herdr-co-review/commit/a0c17c34d4f43b9caa64363a0563021b22aeb92c))
+
 ## [1.1.1](https://github.com/elKei24/herdr-co-review/compare/v1.1.0...v1.1.1) (2026-08-12)
 
 
