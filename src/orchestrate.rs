@@ -15,7 +15,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use crate::cli::StartArgs;
 use crate::config::Config;
 use crate::git::{self, Git};
-use crate::herdr::{Direction, Herdr};
+use crate::herdr::{Herdr, PluginContext};
 use crate::model::{PrInfo, SessionMeta, State};
 use crate::store::Store;
 
@@ -69,17 +69,31 @@ pub fn plan_layout(
 }
 
 /// The PR reference to act on: the CLI argument, or — when launched from Herdr's
-/// GitHub-PR link handler — the clicked URL.
-fn pr_argument(args: &StartArgs) -> Result<String> {
+/// GitHub-PR link handler — the clicked URL from the plugin invocation context.
+fn pr_argument(args: &StartArgs, ctx: Option<&PluginContext>) -> Result<String> {
     if let Some(pr) = &args.pr {
         return Ok(pr.clone());
     }
-    if let Ok(url) = std::env::var("HERDR_PLUGIN_CLICKED_URL") {
-        if !url.trim().is_empty() {
-            return Ok(url);
-        }
+    if let Some(url) = ctx.and_then(PluginContext::clicked_url) {
+        return Ok(url.to_string());
     }
     bail!("no pull request given. Pass one, e.g. `co-review start 123`.")
+}
+
+/// The directory to discover the source repository from. Plugin commands run
+/// with the plugin root as cwd (which is itself a git checkout — of the wrong
+/// repo), so when a plugin invocation context is present, prefer the pane the
+/// user was actually in.
+fn discovery_dir(ctx: Option<&PluginContext>) -> Result<std::path::PathBuf> {
+    if let Some(ctx) = ctx {
+        for dir in ctx.cwd_candidates() {
+            let p = std::path::PathBuf::from(dir);
+            if p.is_dir() {
+                return Ok(p);
+            }
+        }
+    }
+    std::env::current_dir().context("getting current directory")
 }
 
 /// Resolve a PR reference to its session directory, discovering owner/repo from
@@ -123,10 +137,11 @@ fn resolve_pr_ref(pr_arg: &str, git: &Git) -> Result<(String, String, u64)> {
 
 pub fn start(args: &StartArgs) -> Result<()> {
     let cfg = Config::load()?;
-    let cwd = std::env::current_dir().context("getting current directory")?;
+    let ctx = PluginContext::from_env();
+    let cwd = discovery_dir(ctx.as_ref())?;
     let git = Git::discover(&cwd)?;
 
-    let pr_arg = pr_argument(args)?;
+    let pr_arg = pr_argument(args, ctx.as_ref())?;
     let (owner, repo, number) = resolve_pr_ref(&pr_arg, &git)?;
 
     // Choose the agent and render the prompt.
@@ -195,8 +210,9 @@ pub fn start(args: &StartArgs) -> Result<()> {
         );
     }
 
-    let pr = assemble_pr_info(&git, &owner, &repo, number)?;
-    prepare_worktree(&git, &worktree, &pr, args.resume)?;
+    let remote = fetch_remote(&git, &owner, &repo);
+    let pr = assemble_pr_info(&git, &owner, &repo, number, &remote)?;
+    prepare_worktree(&git, &worktree, &pr, args.resume, &remote)?;
 
     // Persist the session state and protocol file.
     std::fs::create_dir_all(&session_dir)
@@ -268,9 +284,32 @@ fn resolve_prompt(args: &StartArgs, cfg: &Config) -> Result<String> {
     Ok(cfg.prompt.clone())
 }
 
+/// The remote to fetch PR refs from. Normally `origin`; only when origin is
+/// recognizably a *different* GitHub repo (e.g. a link handler clicked in a
+/// checkout of another repository) fetch from the PR's GitHub URL directly.
+/// A non-GitHub origin (local bare repo, self-hosted mirror) stays `origin`.
+fn fetch_remote(git: &Git, owner: &str, repo: &str) -> String {
+    let differs = git
+        .remote_url("origin")
+        .ok()
+        .and_then(|u| crate::pr::parse_github_remote(&u))
+        .is_some_and(|(o, r)| !(o.eq_ignore_ascii_case(owner) && r.eq_ignore_ascii_case(repo)));
+    if differs {
+        format!("https://github.com/{owner}/{repo}.git")
+    } else {
+        "origin".to_string()
+    }
+}
+
 /// Fetch PR metadata from GitHub if a token is available, else fall back to what
 /// we can learn from git alone.
-fn assemble_pr_info(git: &Git, owner: &str, repo: &str, number: u64) -> Result<PrInfo> {
+fn assemble_pr_info(
+    git: &Git,
+    owner: &str,
+    repo: &str,
+    number: u64,
+    remote: &str,
+) -> Result<PrInfo> {
     if let Some(token) = crate::github::resolve_token() {
         match crate::github::Client::new(token).fetch_pr(owner, repo, number) {
             Ok(pr) => return Ok(pr),
@@ -281,7 +320,7 @@ fn assemble_pr_info(git: &Git, owner: &str, repo: &str, number: u64) -> Result<P
     }
     // Fallback: fetch the PR head, resolve its sha, approximate the base as the
     // merge-base with the origin default branch.
-    git.fetch("origin", &git::pr_head_refspec(number))?;
+    git.fetch(remote, &git::pr_head_refspec(number))?;
     let head_sha = git.rev_parse(&git::pr_head_ref(number))?;
     let base_sha = default_base_sha(git, &head_sha).unwrap_or_default();
     Ok(PrInfo {
@@ -310,13 +349,19 @@ fn default_base_sha(git: &Git, head_sha: &str) -> Option<String> {
     None
 }
 
-fn prepare_worktree(git: &Git, worktree: &Path, pr: &PrInfo, resume: bool) -> Result<()> {
+fn prepare_worktree(
+    git: &Git,
+    worktree: &Path,
+    pr: &PrInfo,
+    resume: bool,
+    remote: &str,
+) -> Result<()> {
     // Make sure the head is present locally.
-    git.fetch("origin", &git::pr_head_refspec(pr.number))
+    git.fetch(remote, &git::pr_head_refspec(pr.number))
         .with_context(|| format!("fetching PR #{} head", pr.number))?;
     // Bring the base branch too, so diffs work.
     if !pr.base_ref.is_empty() {
-        git.fetch("origin", &pr.base_ref).ok();
+        git.fetch(remote, &pr.base_ref).ok();
     }
 
     let checkout_rev = if pr.head_sha.is_empty() {
@@ -362,7 +407,7 @@ fn launch_layout(plan: &LayoutPlan, store: &Store) -> Result<()> {
     })?;
 
     // Navigator on the right; keep focus on the agent pane.
-    let view_pane = herdr.pane_split(&agent_pane, Direction::Right, false)?;
+    let view_pane = herdr.pane_split(&agent_pane, false, Some(&plan.worktree))?;
     store.update(|s| {
         s.session.view_pane_id = Some(view_pane.clone());
         Ok(())
@@ -407,7 +452,10 @@ fn print_dry_run(
         "herdr workspace create --cwd {} --label {:?}",
         plan.worktree, plan.label
     );
-    println!("herdr pane split <w:p1> --direction right --no-focus");
+    println!(
+        "herdr pane split <w:p1> --direction right --cwd {} --no-focus",
+        plan.worktree
+    );
     println!("herdr pane run <w:p2> {:?}", plan.view_argv.join(" "));
     match &plan.agent_argv {
         Some(a) => println!("herdr pane run <w:p1> {:?}", a.join(" ")),

@@ -13,26 +13,75 @@ use crate::exec;
 /// Environment variable that forces dry-run mode.
 pub const FAKE_ENV: &str = "CO_REVIEW_FAKE_HERDR";
 
+/// Environment variable herdr sets on plugin-invoked commands (actions, link
+/// handlers) with the invocation context as JSON — `clicked_url`,
+/// `focused_pane_cwd`, `workspace_cwd`, ….
+pub const PLUGIN_CONTEXT_ENV: &str = "HERDR_PLUGIN_CONTEXT_JSON";
+
+/// The plugin invocation context, parsed from [`PLUGIN_CONTEXT_ENV`].
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct PluginContext {
+    clicked_url: Option<String>,
+    focused_pane_cwd: Option<String>,
+    workspace_cwd: Option<String>,
+}
+
+impl PluginContext {
+    /// Parse the context from the environment, when running as a plugin command.
+    pub fn from_env() -> Option<PluginContext> {
+        let raw = std::env::var(PLUGIN_CONTEXT_ENV).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    fn field(v: &Option<String>) -> Option<&str> {
+        v.as_deref().map(str::trim).filter(|s| !s.is_empty())
+    }
+
+    /// The URL the user clicked to trigger a link handler.
+    pub fn clicked_url(&self) -> Option<&str> {
+        Self::field(&self.clicked_url)
+    }
+
+    /// The working directories the invocation happened in, most specific first.
+    pub fn cwd_candidates(&self) -> impl Iterator<Item = &str> {
+        [&self.focused_pane_cwd, &self.workspace_cwd]
+            .into_iter()
+            .filter_map(Self::field)
+    }
+}
+
 /// A pane id like `w3:p1`.
 pub type PaneId = String;
 /// A workspace id like `w3`.
 pub type WorkspaceId = String;
 
+/// Herdr's agent lifecycle states. Herdr also reports "unknown" (an agent is
+/// present but unclassified), which parses to `None` so the UI shows nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    Right,
-    Left,
-    Up,
-    Down,
+pub enum AgentState {
+    Idle,
+    Working,
+    Blocked,
+    Done,
 }
 
-impl Direction {
-    fn as_str(self) -> &'static str {
+impl AgentState {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "idle" => Some(AgentState::Idle),
+            "working" => Some(AgentState::Working),
+            "blocked" => Some(AgentState::Blocked),
+            "done" => Some(AgentState::Done),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
         match self {
-            Direction::Right => "right",
-            Direction::Left => "left",
-            Direction::Up => "up",
-            Direction::Down => "down",
+            AgentState::Idle => "idle",
+            AgentState::Working => "working",
+            AgentState::Blocked => "blocked",
+            AgentState::Done => "done",
         }
     }
 }
@@ -92,35 +141,28 @@ impl Herdr {
                 first_pane: "w1:p1".into(),
             });
         }
-        // Prefer an explicit pane id in the output; otherwise fall back to a
-        // bare workspace id and assume its first pane (`wN` -> `wN:p1`), since
-        // `herdr workspace create` may report only the new workspace.
-        let (id, first_pane) = match parse_pane_id(&out) {
-            Some(pane) => (workspace_of(&pane), pane),
-            None => {
-                let wid = parse_workspace_id(&out).ok_or_else(|| {
-                    anyhow!(
-                        "could not parse a workspace or pane id from \
-                         `herdr workspace create` output: {out:?}"
-                    )
-                })?;
-                let pane = format!("{wid}:p1");
-                (wid, pane)
-            }
-        };
-        Ok(Workspace { id, first_pane })
+        parse_workspace_create(&out).ok_or_else(|| {
+            anyhow!(
+                "could not parse a workspace or pane id from \
+                 `herdr workspace create` output: {out:?}"
+            )
+        })
     }
 
-    /// Split `pane` in a direction, returning the new pane's id.
-    pub fn pane_split(&self, pane: &str, dir: Direction, focus: bool) -> Result<PaneId> {
-        let args = build_pane_split_args(pane, dir, focus);
+    /// Split `pane` to the right, returning the new pane's id. `cwd` pins the
+    /// new pane's working directory (it would otherwise inherit herdr's choice).
+    /// (Herdr can also split down, but the layout only ever splits right.)
+    pub fn pane_split(&self, pane: &str, focus: bool, cwd: Option<&str>) -> Result<PaneId> {
+        let args = build_pane_split_args(pane, focus, cwd);
         let out = self.run_capture(&args).context("herdr pane split failed")?;
         if self.dry_run {
             return Ok(bump_pane(pane));
         }
-        parse_pane_id(&out).ok_or_else(|| {
-            anyhow!("could not parse a pane id from `herdr pane split` output: {out:?}")
-        })
+        json_str_at(&out, "/result/pane/pane_id")
+            .or_else(|| parse_pane_id(&out))
+            .ok_or_else(|| {
+                anyhow!("could not parse a pane id from `herdr pane split` output: {out:?}")
+            })
     }
 
     /// Run a command (given as argv) inside a pane.
@@ -160,18 +202,47 @@ impl Herdr {
         Ok(())
     }
 
-    /// Submit a line of text to a pane: type it, then press Enter. This is how the
-    /// navigator injects a message into the live agent session.
-    pub fn pane_submit_line(&self, pane: &str, text: &str) -> Result<()> {
+    /// Submit a line of text to a pane: type it, then press Enter. Raw-terminal
+    /// fallback for panes herdr does not recognize as an agent.
+    fn pane_submit_line(&self, pane: &str, text: &str) -> Result<()> {
         self.pane_send_text(pane, text)?;
         self.pane_send_keys(pane, &["Enter"])
     }
 
-    /// Best-effort: ask Herdr for the state of the agent running in `pane`
-    /// (e.g. "working", "blocked", "done"). Returns `None` if Herdr is
-    /// unavailable or the state can't be determined — callers should treat the
-    /// absence as "unknown" and show nothing.
-    pub fn agent_state(&self, pane: &str) -> Option<String> {
+    /// Submit a line of text to the agent in `pane`. Prefers `herdr agent
+    /// prompt`, which encodes the text and Enter atomically and honors the
+    /// pane's bracketed-paste mode, so it works with agent TUIs. Falls back to
+    /// the raw send-text + Enter path only when herdr reports it has not
+    /// recognized an agent in the pane (e.g. a custom agent command); any other
+    /// failure (say, a stalled just-started agent) is returned so the caller
+    /// can tell the user to retry, instead of pretending a raw send that agent
+    /// TUIs may swallow was delivered.
+    pub fn submit_to_agent(&self, pane: &str, text: &str) -> Result<()> {
+        let args = vec![
+            "agent".into(),
+            "prompt".into(),
+            pane.to_string(),
+            text.to_string(),
+        ];
+        if self.dry_run {
+            self.run_capture(&args)?;
+            return Ok(());
+        }
+        let out = exec::try_capture(&self.bin, &args, None)?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if error_code(&stderr).as_deref() == Some("agent_not_found") {
+            return self.pane_submit_line(pane, text);
+        }
+        Err(anyhow!("herdr agent prompt failed: {}", stderr.trim()))
+    }
+
+    /// Best-effort: ask Herdr for the state of the agent running in `pane`.
+    /// Returns `None` if Herdr is unavailable or the state can't be determined —
+    /// callers should treat the absence as "unknown" and show nothing.
+    pub fn agent_state(&self, pane: &str) -> Option<AgentState> {
         if self.dry_run {
             return None;
         }
@@ -180,28 +251,42 @@ impl Herdr {
     }
 }
 
-/// Scan `herdr agent list` output for the state of the agent on the line
-/// mentioning `pane`. Matches on whole whitespace-separated tokens (not
-/// substrings) so a description word can't be mistaken for a status, and is
-/// otherwise lenient about the exact column layout.
-fn parse_agent_state(list: &str, pane: &str) -> Option<String> {
-    const STATES: [&str; 8] = [
-        "working", "blocked", "waiting", "thinking", "running", "done", "idle", "error",
-    ];
-    for line in list.lines() {
-        if !line.split_whitespace().any(|tok| tok == pane) {
-            continue;
-        }
-        for tok in line.split_whitespace() {
-            let t = tok
-                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
-                .to_ascii_lowercase();
-            if STATES.contains(&t.as_str()) {
-                return Some(t);
-            }
-        }
-    }
-    None
+/// Read the agent status for `pane` from `herdr agent list` JSON:
+/// `{"result":{"agents":[{"pane_id":…,"agent_status":…}]}}`.
+fn parse_agent_state(list: &str, pane: &str) -> Option<AgentState> {
+    let v: serde_json::Value = serde_json::from_str(list.trim()).ok()?;
+    let agents = v.pointer("/result/agents")?.as_array()?;
+    let status = agents
+        .iter()
+        .find(|a| a.get("pane_id").and_then(|p| p.as_str()) == Some(pane))?
+        .get("agent_status")?
+        .as_str()?;
+    AgentState::parse(status)
+}
+
+/// A string at `ptr` (a JSON pointer like `/result/pane/pane_id`) inside a
+/// herdr JSON response.
+fn json_str_at(out: &str, ptr: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(out.trim()).ok()?;
+    v.pointer(ptr)?.as_str().map(str::to_string)
+}
+
+/// The `error.code` of a herdr JSON error envelope (printed to stderr).
+fn error_code(stderr: &str) -> Option<String> {
+    json_str_at(stderr, "/error/code")
+}
+
+/// Parse `herdr workspace create` output: prefer the JSON response's
+/// `result.root_pane.pane_id`, fall back to scanning for id-shaped tokens.
+/// The workspace id is the pane id's `w…` half.
+fn parse_workspace_create(out: &str) -> Option<Workspace> {
+    let pane = json_str_at(out, "/result/root_pane/pane_id")
+        .or_else(|| parse_pane_id(out))
+        .or_else(|| parse_workspace_id(out).map(|wid| format!("{wid}:p1")))?;
+    Some(Workspace {
+        id: workspace_of(&pane),
+        first_pane: pane,
+    })
 }
 
 fn env_flag(name: &str) -> bool {
@@ -224,14 +309,18 @@ fn build_workspace_create_args(cwd: &str, label: &str) -> Vec<String> {
     ]
 }
 
-fn build_pane_split_args(pane: &str, dir: Direction, focus: bool) -> Vec<String> {
+fn build_pane_split_args(pane: &str, focus: bool, cwd: Option<&str>) -> Vec<String> {
     let mut args = vec![
         "pane".into(),
         "split".into(),
         pane.to_string(),
         "--direction".into(),
-        dir.as_str().to_string(),
+        "right".into(),
     ];
+    if let Some(cwd) = cwd {
+        args.push("--cwd".into());
+        args.push(cwd.to_string());
+    }
     if !focus {
         args.push("--no-focus".into());
     }
@@ -289,15 +378,28 @@ fn parse_workspace_id(text: &str) -> Option<WorkspaceId> {
     None
 }
 
+// Herdr ids are opaque (`w`/`p` + an alphanumeric tail, not necessarily
+// numeric), so the token fallback accepts any id-shaped token.
 fn is_pane_id(tok: &str) -> bool {
     let Some((w, p)) = tok.split_once(':') else {
         return false;
     };
-    is_wid(w) && p.starts_with('p') && p.len() > 1 && p[1..].chars().all(|c| c.is_ascii_digit())
+    is_wid(w)
+        && p.starts_with('p')
+        && p.len() > 1
+        && p[1..].chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn is_wid(tok: &str) -> bool {
-    tok.starts_with('w') && tok.len() > 1 && tok[1..].chars().all(|c| c.is_ascii_digit())
+    let tail = match tok.strip_prefix('w') {
+        Some(t) if !t.is_empty() => t,
+        _ => return false,
+    };
+    // Require a digit or uppercase so prose like "workspace" can't match.
+    tail.chars().all(|c| c.is_ascii_alphanumeric())
+        && tail
+            .chars()
+            .any(|c| c.is_ascii_digit() || c.is_ascii_uppercase())
 }
 
 fn workspace_of(pane: &str) -> WorkspaceId {
@@ -349,7 +451,34 @@ mod tests {
         );
         assert_eq!(parse_pane_id("no id here"), None);
         assert!(is_wid("w3"));
+        assert!(is_wid("wP"));
         assert!(!is_wid("x3"));
+        assert!(!is_wid("workspace"));
+        assert!(is_pane_id("wP:p1"));
+    }
+
+    #[test]
+    fn parses_workspace_create_json() {
+        let out = r#"{"id":"cli:workspace:create","result":{"root_pane":{"pane_id":"wP:p1","workspace_id":"wP"},"tab":{"tab_id":"wP:t1"},"type":"workspace_created","workspace":{"label":"x","workspace_id":"wP"}}}"#;
+        let ws = parse_workspace_create(out).unwrap();
+        assert_eq!(ws.id, "wP");
+        assert_eq!(ws.first_pane, "wP:p1");
+    }
+
+    #[test]
+    fn parses_pane_split_json() {
+        let out = r#"{"id":"cli:pane:split","result":{"pane":{"pane_id":"wP:p2","workspace_id":"wP"},"type":"pane_info"}}"#;
+        assert_eq!(
+            json_str_at(out, "/result/pane/pane_id").as_deref(),
+            Some("wP:p2")
+        );
+    }
+
+    #[test]
+    fn parses_error_code_from_stderr() {
+        let stderr = r#"{"error":{"code":"agent_not_found","message":"agent target w1:p1 not found"},"id":"cli:agent:prompt"}"#;
+        assert_eq!(error_code(stderr).as_deref(), Some("agent_not_found"));
+        assert_eq!(error_code("plain text failure"), None);
     }
 
     #[test]
@@ -387,13 +516,15 @@ mod tests {
             ]
         );
         assert_eq!(
-            build_pane_split_args("w1:p1", Direction::Right, false),
+            build_pane_split_args("w1:p1", false, Some("/tmp/wt")),
             vec![
                 "pane",
                 "split",
                 "w1:p1",
                 "--direction",
                 "right",
+                "--cwd",
+                "/tmp/wt",
                 "--no-focus"
             ]
         );
@@ -404,17 +535,21 @@ mod tests {
     }
 
     #[test]
-    fn parses_agent_state_leniently() {
-        let listing = "\
-w1:p1  claude   working   PR review
-w1:p2  co-review view  idle";
+    fn parses_agent_state_from_json() {
+        let listing = r#"{"id":"cli:agent:list","result":{"agents":[
+            {"agent":"claude","agent_status":"working","pane_id":"w1:p1"},
+            {"agent":"codex","agent_status":"idle","pane_id":"w1:p2"},
+            {"agent":"claude","agent_status":"unknown","pane_id":"w1:p3"}
+        ],"type":"agent_list"}}"#;
         assert_eq!(
-            parse_agent_state(listing, "w1:p1").as_deref(),
-            Some("working")
+            parse_agent_state(listing, "w1:p1"),
+            Some(AgentState::Working)
         );
-        assert_eq!(parse_agent_state(listing, "w1:p2").as_deref(), Some("idle"));
+        assert_eq!(parse_agent_state(listing, "w1:p2"), Some(AgentState::Idle));
+        // "unknown" carries no signal — show nothing.
+        assert_eq!(parse_agent_state(listing, "w1:p3"), None);
         assert_eq!(parse_agent_state(listing, "w9:p9"), None);
-        assert_eq!(parse_agent_state("no state here for w1:p1", "w1:p1"), None);
+        assert_eq!(parse_agent_state("not json", "w1:p1"), None);
     }
 
     #[test]
@@ -425,13 +560,11 @@ w1:p2  co-review view  idle";
         };
         let ws = h.workspace_create("/tmp", "x").unwrap();
         assert_eq!(ws.first_pane, "w1:p1");
-        let p2 = h
-            .pane_split(&ws.first_pane, Direction::Right, false)
-            .unwrap();
+        let p2 = h.pane_split(&ws.first_pane, false, Some("/tmp")).unwrap();
         assert_eq!(p2, "w1:p2");
         // these are no-ops in dry-run and must not error
         h.pane_run(&p2, &["co-review".into(), "view".into()])
             .unwrap();
-        h.pane_submit_line(&ws.first_pane, "hello").unwrap();
+        h.submit_to_agent(&ws.first_pane, "hello").unwrap();
     }
 }

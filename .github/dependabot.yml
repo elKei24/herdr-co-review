@@ -1,0 +1,37 @@
+# Native Dependabot instead of Renovate: it needs no app install and works on
+# private repos (see docs/DECISIONS.md §13). Prefixes are chosen so commitlint
+# passes and semantic-release versions runtime-dependency bumps.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: fix
+      include: scope
+    groups:
+      cargo-patch:
+        update-types: [patch]
+
+  # Release tooling only (semantic-release + commitlint).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      npm:
+        patterns: ["*"]

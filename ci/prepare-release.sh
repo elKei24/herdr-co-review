@@ -11,6 +11,9 @@ echo "Setting Cargo.toml version to ${version}"
 # Replace only the first `version = "..."` (the [package] one).
 sed -i -E "0,/^version = \"[^\"]*\"/s//version = \"${version}\"/" Cargo.toml
 
+echo "Setting herdr-plugin.toml version to ${version}"
+sed -i -E "0,/^version = \"[^\"]*\"/s//version = \"${version}\"/" herdr-plugin.toml
+
 echo "Updating Cargo.lock"
 cargo update -p co-review --precise "${version}"
 

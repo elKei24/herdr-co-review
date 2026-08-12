@@ -111,7 +111,7 @@ pub struct ViewArgs {
 pub struct StartArgs {
     /// The pull request: `123`, `#123`, `owner/repo#123`, or a full GitHub URL.
     /// Optional when invoked from Herdr's GitHub-PR link handler, which supplies
-    /// it via $HERDR_PLUGIN_CLICKED_URL.
+    /// it as `clicked_url` in $HERDR_PLUGIN_CONTEXT_JSON.
     pub pr: Option<String>,
 
     /// Agent to drive the review (must exist in config). Defaults to config's

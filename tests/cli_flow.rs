@@ -41,6 +41,17 @@ fn co_review(
     cwd: &Path,
     args: &[&str],
 ) -> (String, String, bool) {
+    co_review_env(home, session, cwd, args, &[])
+}
+
+/// Like [`co_review`], with extra environment variables set.
+fn co_review_env(
+    home: &Path,
+    session: Option<&Path>,
+    cwd: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> (String, String, bool) {
     let mut cmd = Command::new(bin());
     cmd.args(args)
         .current_dir(cwd)
@@ -49,6 +60,9 @@ fn co_review(
         // Force the no-token path so we never touch the network.
         .env("GH_TOKEN", "")
         .env("GITHUB_TOKEN", "");
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
     if let Some(s) = session {
         cmd.env("CO_REVIEW_SESSION", s);
     }
@@ -320,6 +334,48 @@ fn edit_resets_decided_verdict_and_clears_fields() {
         v["findings"][0]["category"].is_null(),
         "category not cleared"
     );
+}
+
+/// Launched via Herdr's link handler, `start` gets no CLI argument and runs
+/// with the plugin root as cwd: the PR URL and the repo directory must both
+/// come from $HERDR_PLUGIN_CONTEXT_JSON.
+#[test]
+fn plugin_context_supplies_url_and_repo_dir() {
+    if !have_git() {
+        eprintln!("git unavailable; skipping");
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (home, work) = make_pr_repo(root.path());
+    // Deliberately run from a directory that is not the repo (like a plugin
+    // action would).
+    let elsewhere = root.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let ctx = serde_json::json!({
+        "clicked_url": "https://github.com/owner/repo/pull/1",
+        "focused_pane_cwd": work.to_str().unwrap(),
+        "workspace_cwd": null,
+    })
+    .to_string();
+
+    let (_o, err, ok) = co_review_env(
+        &home,
+        None,
+        &elsewhere,
+        &["start"],
+        &[("HERDR_PLUGIN_CONTEXT_JSON", &ctx)],
+    );
+    assert!(ok, "start from plugin context failed: {err}");
+    let session = home.join("sessions").join("owner-repo-1");
+    assert!(session.join("state.json").is_file(), "session not created");
+    let wt = home.join("worktrees").join("owner-repo-1");
+    assert_eq!(
+        std::fs::read_to_string(wt.join("f.txt")).unwrap(),
+        "a\nB2\nc\nd\n"
+    );
+
+    let (_o, err, ok) = co_review(&home, None, &work, &["end", "owner/repo#1", "--force"]);
+    assert!(ok, "end failed: {err}");
 }
 
 #[test]
