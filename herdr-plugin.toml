@@ -7,7 +7,7 @@
 
 id = "elkei24.co-review"
 name = "co-review"
-version = "0.0.0"
+version = "1.4.1"
 min_herdr_version = "0.8.0"
 description = "Interactive, split-screen PR co-review between you and your AI agent."
 platforms = ["linux", "macos"]
@@ -18,12 +18,15 @@ platforms = ["linux", "macos"]
 [[build]]
 command = ["bash", "scripts/install-binary.sh"]
 
-# Invoked by the link handler; reads the clicked PR URL from the environment.
+# Invoked by the link handler; `start` reads the clicked PR URL and the pane's
+# cwd from $HERDR_PLUGIN_CONTEXT_JSON. The wrapper restores a usable PATH
+# (herdr runs plugin commands with a minimal one) and resolves the binary
+# under $HERDR_PLUGIN_ROOT.
 [[actions]]
 id = "start-from-url"
 title = "Co-review this pull request"
 contexts = ["workspace", "pane"]
-command = ["bin/co-review", "start"]
+command = ["bash", "scripts/run-action.sh", "start"]
 
 # Ctrl+click a GitHub PR URL anywhere to start a co-review for it.
 [[link_handlers]]

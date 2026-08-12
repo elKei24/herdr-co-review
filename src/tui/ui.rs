@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::herdr::AgentState;
 use crate::model::{Severity, Verdict};
 use crate::tui::app::{App, Input};
 
@@ -59,7 +60,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     )];
     if let Some(agent) = app.agent_state() {
         spans.push(Span::styled(
-            format!(" agent: {agent} "),
+            format!(" agent: {} ", agent.label()),
             Style::default().fg(agent_state_color(agent)),
         ));
     }
@@ -329,13 +330,12 @@ fn draw_help(f: &mut Frame, size: Rect) {
     );
 }
 
-fn agent_state_color(state: &str) -> Color {
+fn agent_state_color(state: AgentState) -> Color {
     match state {
-        "working" | "running" | "thinking" => Color::Green,
-        "blocked" | "waiting" => Color::Yellow,
-        "error" => Color::Red,
-        "done" => Color::Cyan,
-        _ => Color::Gray,
+        AgentState::Working => Color::Green,
+        AgentState::Blocked => Color::Yellow,
+        AgentState::Done => Color::Cyan,
+        AgentState::Idle => Color::Gray,
     }
 }
 

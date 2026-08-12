@@ -5,6 +5,11 @@
 # toolchain once releases exist. Safe to run standalone too.
 set -euo pipefail
 
+# Herdr runs plugin build commands with a minimal PATH; make sure curl/tar/cargo
+# from the usual locations are reachable.
+PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH
+
 REPO="elKei24/herdr-co-review"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bindir="${root}/bin"

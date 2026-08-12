@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 
 use crate::diffview::{self, CodeSnippet, LineKind};
 use crate::git::Git;
-use crate::herdr::Herdr;
+use crate::herdr::{AgentState, Herdr};
 use crate::model::{ChatEntry, Location, State, Verdict};
 use crate::store::Store;
 use crate::tui::syntax::Highlighter;
@@ -56,11 +56,11 @@ pub struct App {
     /// list re-runs the (subprocess-backed) git diff at most once per finding.
     code_cache: HashMap<String, Vec<CodeBlock>>,
 
-    /// Best-effort agent state from Herdr (working/blocked/done/…). A background
-    /// thread writes here so the (potentially slow) `herdr agent list` subprocess
-    /// never blocks the render loop; `agent_state_shown` is the UI-thread copy.
-    agent_state: Arc<Mutex<Option<String>>>,
-    agent_state_shown: Option<String>,
+    /// Best-effort agent state from Herdr. A background thread writes here so
+    /// the (potentially slow) `herdr agent list` subprocess never blocks the
+    /// render loop; `agent_state_shown` is the UI-thread copy.
+    agent_state: Arc<Mutex<Option<AgentState>>>,
+    agent_state_shown: Option<AgentState>,
 }
 
 impl App {
@@ -134,13 +134,13 @@ impl App {
     }
 
     /// The best-effort agent state to show in the header, if known.
-    pub fn agent_state(&self) -> Option<&str> {
-        self.agent_state_shown.as_deref()
+    pub fn agent_state(&self) -> Option<AgentState> {
+        self.agent_state_shown
     }
 
     /// Pick up the latest agent state from the background poller (non-blocking).
     pub fn tick_agent(&mut self) {
-        let latest = self.agent_state.lock().ok().and_then(|g| g.clone());
+        let latest = self.agent_state.lock().ok().and_then(|g| *g);
         if latest != self.agent_state_shown {
             self.agent_state_shown = latest;
             self.dirty = true;
@@ -356,11 +356,12 @@ impl App {
     }
 
     /// Submit a line to the agent's pane. `Ok(true)` delivered, `Ok(false)` when
-    /// there is no agent pane wired (or no Herdr), `Err` on a delivery failure.
+    /// there is no agent pane wired (or no Herdr), `Err` on a delivery failure
+    /// (surfaced in the status line so the user knows to retry).
     fn deliver_to_agent(&self, text: &str) -> Result<bool> {
         match &self.state.session.agent_pane_id {
             Some(pane) if self.herdr.available() => {
-                self.herdr.pane_submit_line(pane, text)?;
+                self.herdr.submit_to_agent(pane, text)?;
                 Ok(true)
             }
             _ => Ok(false),

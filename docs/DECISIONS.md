@@ -203,3 +203,34 @@ toolchain. Targets: linux and macOS (x86_64 + aarch64) and Windows x86_64;
 linux-aarch64 cross-compiles on the ubuntu runner with the
 `gcc-aarch64-linux-gnu` linker (the crate is pure-Rust: rustls, `fancy-regex`
 instead of `onig`, no other C deps).
+
+## 13. First contact with real Herdr (0.8.0): JSON responses, `agent prompt`, opaque ids
+
+The tool was built blind against a simulated Herdr (§8). Running against a real
+Herdr 0.8.0 session (2026-08-12) invalidated several guesses, all fixed:
+
+- **Herdr control commands return JSON**, not prose. `workspace create` reports
+  `.result.workspace.workspace_id` / `.result.root_pane.pane_id`, `pane split`
+  reports `.result.pane.pane_id`, and `agent list` reports
+  `.result.agents[].agent_status`. The wrapper now parses these; the old
+  token-scan survives only as a fallback.
+- **Ids are opaque** — not necessarily `w<digits>` (a live session produced
+  `wP:p1`), so nothing may assume numeric ids.
+- **Chat injection uses `herdr agent prompt`**, which submits text + Enter
+  atomically and honors bracketed paste. The raw `pane send-text` + `send-keys
+  Enter` path is kept only as a fallback when Herdr has not recognized an agent
+  in the pane (custom agent commands); any other prompt failure is surfaced in
+  the navigator instead of silently pretending delivery (a prompt to a
+  just-started agent can stall — observed live).
+- **Agent lifecycle states are `idle|working|blocked|done|unknown`**; `unknown`
+  is shown as nothing.
+- **The clicked-URL env var does not exist.** Plugin invocations receive
+  `$HERDR_PLUGIN_CONTEXT_JSON` (with `clicked_url`, `focused_pane_cwd`,
+  `workspace_cwd`). Plugin actions also run with the *plugin root* as cwd — a
+  git checkout of co-review itself — so `start` now resolves the source repo
+  from the context's pane cwd, and fetches from the PR's GitHub URL when the
+  surrounding repo's origin is a different GitHub repo. Herdr also runs plugin
+  commands with a minimal PATH, so the action goes through
+  `scripts/run-action.sh`, which restores common bin dirs.
+- `pane split` only supports `right|down`, and takes `--cwd` (now passed);
+  a `--ratio` also exists in 0.8.0, so §10's removed knob could return.
