@@ -1,3 +1,15 @@
+# [1.1.0](https://github.com/elKei24/herdr-co-review/compare/v1.0.0...v1.1.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* satisfy clippy::question_mark in parse_github_remote ([135aaf4](https://github.com/elKei24/herdr-co-review/commit/135aaf45c77af079b520a7e00dc00c7c2ccc5aef))
+
+
+### Features
+
+* add curl|sh installer for prebuilt binaries ([a76149f](https://github.com/elKei24/herdr-co-review/commit/a76149f4d250154fe475b1a772608890079f3277))
+
 # 1.0.0 (2026-08-12)
 
 
