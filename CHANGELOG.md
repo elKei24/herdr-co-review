@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/elKei24/herdr-co-review/compare/v1.4.0...v1.4.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* fourth code-review pass ([186a2bf](https://github.com/elKei24/herdr-co-review/commit/186a2bf5e2a1da2dd54c638c1b335317b5c5fd67))
+
 # [1.4.0](https://github.com/elKei24/herdr-co-review/compare/v1.3.0...v1.4.0) (2026-08-12)
 
 
