@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/elKei24/herdr-co-review/compare/v1.5.0...v1.5.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **deps:** bump fs4 from 0.13.1 to 1.1.0 ([#4](https://github.com/elKei24/herdr-co-review/issues/4)) ([4a4e96f](https://github.com/elKei24/herdr-co-review/commit/4a4e96f499a28d4af72377a0e498c25bbe451129))
+
 # [1.5.0](https://github.com/elKei24/herdr-co-review/compare/v1.4.5...v1.5.0) (2026-08-12)
 
 
