@@ -288,3 +288,45 @@ Hit-testing needs the geometry that was actually painted, so `ui::draw` takes
 `&mut App` and records the two pane rects, the list's settled scroll offset, and
 the detail's maximum scroll. That also gave the detail scroll a real upper bound
 (`J` used to increment forever, and the clamp only happened at render time).
+
+## 17. Installing the plugin puts `co-review` on the user's PATH
+
+Decision 15 fixed the agent's PATH inside a session, but not the human's: after
+`herdr plugin install`, the README's very next section tells you to run
+`co-review start 123`, and the binary lived only under the plugin root. Every
+plugin-first user hit "command not found" between the install and the usage
+section.
+
+Herdr has no manifest field for exposing a plugin binary (verified on 0.8.0: the
+manifest is `build`/`startup`/`panes`/`actions`/`events`/`link_handlers`, and no
+event fires on install or uninstall — `herdr-reviewr` sidesteps this by making
+its build step `cargo install`, which we can't, since the point of decision 12
+is not needing Rust). So the build step does it: `scripts/link-on-path.sh`
+symlinks the downloaded binary into a PATH directory.
+
+A symlink, not a copy, so a plugin update is instantly live and there is only
+ever one binary. It replaces only a link it owns — one pointing at a `co-review`
+under a herdr plugin root, or one left dangling, which is worth nothing to
+anyone. The user's own install outranks ours, in both directions: we neither
+overwrite it nor *shadow* it from another PATH directory, so the step first
+scans PATH and bails if some other `co-review` is already there. That is also
+why the directory policy is shared with `install.sh` (both prefer a writable
+standard directory that is already on PATH) — two policies would have put the
+plugin's link in `~/.local/bin` in front of a `curl | sh` install in
+`/usr/local/bin`. Nothing here can fail the plugin install: no writable
+directory, no permission, an existing file — all warn and exit 0, because the
+action and the link handler work without a PATH entry.
+
+The cost of the symlink is that `herdr plugin uninstall` leaves it dangling.
+Without an uninstall hook the options were a wrapper script that prints a nicer
+error, or docs; we took docs, plus two repairs for the case that actually
+recurs — the next install removes a stale link, and `doctor` reports a broken
+one (and a PATH entry that is not the running binary) instead of silently
+saying `co-review` is missing.
+
+The considered alternative was moving all of this into the binary as a
+`co-review install` subcommand with an ownership receipt, which would also buy
+a real `co-review uninstall`. It is the better home for install *policy*, but
+it grows the agent-facing CLI contract (which every subcommand must document
+and test) for a step that runs twice in a plugin's life. Reconsider if the
+receipt is ever needed for something else.

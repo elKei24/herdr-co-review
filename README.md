@@ -93,9 +93,9 @@ installer picks the right one for your machine:
 curl -fsSL https://raw.githubusercontent.com/elKei24/herdr-co-review/main/install.sh | sh
 ```
 
-It installs to `/usr/local/bin` (if writable) or `~/.local/bin`; set
-`CO_REVIEW_INSTALL_DIR` to override. Windows users: download the `.zip` from the
-releases page.
+It installs to the first of `/usr/local/bin` and `~/.local/bin` that is writable
+and on your PATH, falling back to `~/.local/bin`; set `CO_REVIEW_INSTALL_DIR` to
+override. Windows users: download the `.zip` from the releases page.
 
 ### From source
 
@@ -106,7 +106,9 @@ cargo install --git https://github.com/elKei24/herdr-co-review
 ### As a Herdr plugin
 
 ```sh
-herdr plugin install elKei24/herdr-co-review     # or: herdr plugin link /path/to/checkout
+herdr plugin install elKei24/herdr-co-review
+herdr plugin link /path/to/checkout    # local dev; skips build steps, so run
+                                       # `bash scripts/install-binary.sh` yourself
 ```
 
 The plugin's install step runs
@@ -117,10 +119,17 @@ You get a "Co-review this pull request" action and a GitHub-PR link handler
 (Ctrl+click a PR URL to start a review). Manifest:
 [`herdr-plugin.toml`](./herdr-plugin.toml).
 
-The plugin is self-contained: review sessions put its private binary on the
-panes' PATH, so the agent's `co-review` commands work without any further
-install. Install the CLI (see above) only if you also want to run `co-review`
-from your own shells.
+Installing the plugin is enough to use the CLI too: it symlinks the binary into
+the same directory the installer above would pick, so `co-review start …` works
+from your shells. A `co-review` you installed yourself is never overwritten or
+shadowed — the step warns and leaves your PATH alone. `CO_REVIEW_NO_PATH_LINK=1`
+skips it entirely.
+
+`herdr plugin uninstall` removes the plugin but leaves that symlink behind;
+`co-review doctor` prints its path so you can `rm` it.
+
+`co-review doctor` reports which `co-review` your PATH resolves to, and flags a
+leftover broken link.
 
 ## Usage
 

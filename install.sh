@@ -21,14 +21,22 @@ case "${os}" in
   *) echo "unsupported OS: ${os} (download a binary from https://github.com/${REPO}/releases)" >&2; exit 1 ;;
 esac
 
-# Pick an install directory: the override, else a writable standard location.
-if [ -n "${CO_REVIEW_INSTALL_DIR:-}" ]; then
-  dir="${CO_REVIEW_INSTALL_DIR}"
-elif [ -w /usr/local/bin ] 2>/dev/null; then
-  dir="/usr/local/bin"
-else
-  dir="${HOME}/.local/bin"
+# Pick an install directory: the override, else a writable standard location,
+# preferring one already on PATH. Same policy as scripts/link-on-path.sh, which
+# does this for the Herdr plugin — keep the two in sync.
+dir="${CO_REVIEW_INSTALL_DIR:-}"
+if [ -z "${dir}" ]; then
+  for candidate in /usr/local/bin "${HOME}/.local/bin"; do
+    [ -w "${candidate}" ] || continue
+    case ":${PATH}:" in
+      *":${candidate}:"*)
+        dir="${candidate}"
+        break
+        ;;
+    esac
+  done
 fi
+dir="${dir:-${HOME}/.local/bin}"
 mkdir -p "${dir}"
 
 url="https://github.com/${REPO}/releases/latest/download/co-review-${triple}.tar.gz"

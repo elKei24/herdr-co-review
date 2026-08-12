@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Put a `co-review` binary in ./bin, preferring a prebuilt release asset and
-# falling back to a local `cargo build`. Used by the Herdr plugin's build step
-# (see herdr-plugin.toml) so installing the plugin does not require a Rust
-# toolchain once releases exist. Safe to run standalone too.
+# Put a `co-review` binary in ./bin and symlink it onto the user's PATH,
+# preferring a prebuilt release asset and falling back to a local `cargo build`.
+# Used by the Herdr plugin's build step (see herdr-plugin.toml) so installing the
+# plugin does not require a Rust toolchain once releases exist, and leaves
+# `co-review` runnable from a shell. Safe to run standalone too.
 set -euo pipefail
 
 # Herdr runs plugin build commands with a minimal PATH; make sure curl/tar/cargo
@@ -67,3 +68,5 @@ else
 fi
 
 "${bindir}/co-review" --version
+
+bash "${root}/scripts/link-on-path.sh" "${bindir}/co-review"

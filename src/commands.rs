@@ -670,6 +670,21 @@ pub fn doctor() -> Result<()> {
     let git = crate::exec::have("git");
     println!("[{}] git", mark(git));
 
+    let name = env!("CARGO_PKG_NAME");
+    let (path_ok, path_detail) = match crate::exec::path_entry(name) {
+        Some(p) if p.is_file() => {
+            let same = std::fs::canonicalize(&p).ok() == std::env::current_exe().ok();
+            let running = if same { "" } else { " (not this binary)" };
+            (true, format!(": {}{}", p.display(), running))
+        }
+        Some(p) => (
+            false,
+            format!(": {} is a broken link; remove it", p.display()),
+        ),
+        None => (false, " (run the installer, see the README)".to_string()),
+    };
+    println!("[{}] {name} on PATH{path_detail}", mark(path_ok));
+
     let herdr = crate::herdr::Herdr::new(false);
     let herdr_ok = herdr.available();
     println!(
