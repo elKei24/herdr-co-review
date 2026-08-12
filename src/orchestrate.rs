@@ -31,12 +31,19 @@ pub struct LayoutPlan {
     pub view_argv: Vec<String>,
 }
 
-/// Prefix an argv with `env CO_REVIEW_SESSION=<dir>` so the process — and every
-/// `co-review` command it spawns — targets this session without `--session`.
-fn env_prefixed(session_dir: &str, argv: &[String]) -> Vec<String> {
-    let mut out = Vec::with_capacity(argv.len() + 2);
+/// Prefix an argv with `env CO_REVIEW_SESSION=<dir> PATH=<bindir>:<PATH>` so
+/// the process — and every `co-review` command it spawns — targets this session
+/// without `--session`, and finds the *bare* `co-review` the prompt and
+/// protocol tell the agent to run even when the binary is not otherwise on
+/// PATH (e.g. it is the Herdr plugin's private copy under the plugin root).
+fn env_prefixed(session_dir: &str, self_bin: &str, argv: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(argv.len() + 3);
     out.push("env".to_string());
     out.push(format!("{}={}", crate::paths::SESSION_ENV, session_dir));
+    if let Some(dir) = Path::new(self_bin).parent().filter(|d| d.is_absolute()) {
+        let path = std::env::var("PATH").unwrap_or_default();
+        out.push(format!("PATH={}:{path}", dir.display()));
+    }
     out.extend(argv.iter().cloned());
     out
 }
@@ -52,6 +59,7 @@ pub fn plan_layout(
 ) -> LayoutPlan {
     let view_argv = env_prefixed(
         session_dir,
+        self_bin,
         &[
             self_bin.to_string(),
             "view".to_string(),
@@ -59,7 +67,7 @@ pub fn plan_layout(
             session_dir.to_string(),
         ],
     );
-    let agent_argv = agent_command.map(|cmd| env_prefixed(session_dir, cmd));
+    let agent_argv = agent_command.map(|cmd| env_prefixed(session_dir, self_bin, cmd));
     LayoutPlan {
         label: label.to_string(),
         worktree: worktree.to_string(),
@@ -470,12 +478,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn env_prefix_targets_session() {
-        let out = env_prefixed("/s/dir", &["claude".into(), "hi".into()]);
+    fn env_prefix_targets_session_and_binary_dir() {
+        let out = env_prefixed(
+            "/s/dir",
+            "/plug/bin/co-review",
+            &["claude".into(), "hi".into()],
+        );
         assert_eq!(out[0], "env");
         assert_eq!(out[1], "CO_REVIEW_SESSION=/s/dir");
-        assert_eq!(out[2], "claude");
-        assert_eq!(out[3], "hi");
+        assert!(
+            out[2].starts_with("PATH=/plug/bin:"),
+            "agent pane must find the launching binary on PATH: {:?}",
+            out[2]
+        );
+        assert_eq!(out[3], "claude");
+        assert_eq!(out[4], "hi");
+    }
+
+    #[test]
+    fn env_prefix_skips_path_for_bare_binary_name() {
+        // A relative fallback like plain "co-review" has no usable directory.
+        let out = env_prefixed("/s", "co-review", &["x".into()]);
+        assert!(!out.iter().any(|a| a.starts_with("PATH=")));
     }
 
     #[test]
