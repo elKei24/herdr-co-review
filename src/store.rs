@@ -11,7 +11,7 @@ use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use fs4::fs_std::FileExt;
+use fs4::FileExt;
 
 use crate::model::State;
 
@@ -73,7 +73,7 @@ impl Store {
             .truncate(false)
             .open(self.lock_path())
             .with_context(|| format!("opening lock file {}", self.lock_path().display()))?;
-        FileExt::lock_exclusive(&file).context("acquiring session lock")?;
+        FileExt::lock(&file).context("acquiring session lock")?;
         Ok(LockGuard { file })
     }
 
