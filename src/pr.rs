@@ -135,10 +135,10 @@ pub fn parse_github_remote(url: &str) -> Option<(String, String)> {
         .or_else(|| url.strip_prefix("http://github.com/"))
     {
         rest
-    } else if let Some(idx) = url.find("github.com/") {
-        &url[idx + "github.com/".len()..]
     } else {
-        return None;
+        // Any other URL that mentions github.com/…
+        let idx = url.find("github.com/")?;
+        &url[idx + "github.com/".len()..]
     };
 
     let tail = tail.trim_end_matches('/');
