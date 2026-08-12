@@ -31,7 +31,9 @@ instead of running them, and `CO_REVIEW_HOME` relocates all state. The tests in
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/); the
 version and changelog are derived from them by
-[semantic-release](https://semantic-release.gitbook.io/). CI lints PR commits.
+[semantic-release](https://semantic-release.gitbook.io/). CI lints PR commits
+**and the PR title** — PRs are squash-merged with the title as the commit
+title, so the title is what semantic-release actually sees.
 
 - `feat: …` — a new feature (minor release)
 - `fix: …` — a bug fix (patch release)
