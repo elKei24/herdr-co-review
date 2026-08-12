@@ -3,7 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # `edited` included because the commitlint job checks the PR title, which
+  # otherwise stays failed after the title is fixed.
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
