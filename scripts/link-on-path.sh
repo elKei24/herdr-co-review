@@ -36,7 +36,8 @@ case "${src}" in
       src="${plugins}/github/${id}-$(sha256_12 "${id}")/${rel}"
     else
       echo "warning: cannot read the plugin id from ${checkout}/herdr-plugin.toml;" >&2
-      echo "         the PATH link will dangle once herdr moves this staging checkout." >&2
+      echo "         not linking ${src} — the staging checkout disappears after install." >&2
+      exit 0
     fi
     ;;
 esac
