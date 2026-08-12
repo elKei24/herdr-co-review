@@ -234,3 +234,21 @@ Herdr 0.8.0 session (2026-08-12) invalidated several guesses, all fixed:
   `scripts/run-action.sh`, which restores common bin dirs.
 - `pane split` only supports `right|down`, and takes `--cwd` (now passed);
   a `--ratio` also exists in 0.8.0, so §10's removed knob could return.
+
+## 14. Dependabot instead of Renovate; supply-chain hardening
+
+§9 chose Renovate, but the app was never installed on the (private) repo, so no
+update PRs ever arrived; herdr-title-sync meanwhile uses native Dependabot.
+Switched to `.github/dependabot.yml` (github-actions, cargo, npm — weekly,
+grouped, Conventional-Commit prefixes so commitlint passes and cargo bumps
+release as `fix`). Renovate's config was deleted to avoid two bots if the app
+ever gets installed.
+
+Hardening, mirroring herdr-title-sync PRs #3/#4: all GitHub Actions pinned to
+full commit SHAs (Dependabot keeps the pins current), `persist-credentials:
+false` on every checkout that doesn't push, job-level least-privilege
+permissions in the release workflow, and the release commit pushed over SSH via
+a `RELEASE_DEPLOY_KEY` deploy key (which can bypass a branch ruleset once one
+exists — rulesets need the repo to be public or on GitHub Pro). With the secret
+unset, checkout falls back to token auth, so the pipeline still works before
+the key is configured.

@@ -4,10 +4,8 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+# Job-level permissions only; each job gets the least it needs.
+permissions: {}
 
 concurrency:
   group: release
@@ -19,19 +17,27 @@ jobs:
   release:
     name: semantic-release
     runs-on: ubuntu-latest
+    permissions:
+      # Creating the GitHub release / commenting on released PRs and issues.
+      # The release commit itself is pushed over SSH via the deploy key, which
+      # also lets it bypass a future branch ruleset (like herdr-title-sync).
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       released: ${{ steps.semantic.outputs.released }}
       tag: ${{ steps.semantic.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 24
       - run: npm ci
       - name: Release
         id: semantic
@@ -45,6 +51,8 @@ jobs:
     name: ${{ matrix.target }}
     needs: release
     if: needs.release.outputs.released == 'true'
+    permissions:
+      contents: write # upload release assets
     strategy:
       fail-fast: false
       matrix:
@@ -67,12 +75,13 @@ jobs:
             ext: zip
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
       - name: Install cross linker
@@ -102,7 +111,7 @@ jobs:
           fi
           echo "asset=dist/${name}.${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.release.outputs.tag }}
           files: ${{ steps.pkg.outputs.asset }}
