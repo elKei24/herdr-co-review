@@ -2,7 +2,7 @@
 name = "co-review"
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 description = "Interactive, split-screen PR co-review between you and your AI agent, inside Herdr."
 license = "MIT"
 repository = "https://github.com/elKei24/herdr-co-review"

@@ -47,6 +47,22 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  msrv:
+    name: MSRV (rust-version in Cargo.toml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          v="$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+      - name: Install the MSRV toolchain
+        run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the crate builds on its MSRV
+        run: cargo +${{ steps.msrv.outputs.version }} check --locked
+
   commitlint:
     name: Commit messages
     runs-on: ubuntu-latest
