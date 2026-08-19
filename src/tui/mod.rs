@@ -381,6 +381,54 @@ mod tests {
         assert!(text.contains("pending"), "verdict badge missing");
     }
 
+    /// Type text through the real input path, one key at a time.
+    fn type_str(app: &mut App, text: &str) {
+        for c in text.chars() {
+            app.push_input_char(c);
+        }
+    }
+
+    #[test]
+    fn long_input_wraps_instead_of_running_off_screen() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        let mut app = App::new(store).unwrap();
+        app.begin_input(Input::Note);
+        type_str(
+            &mut app,
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima",
+        );
+        let mut term = Terminal::new(TestBackend::new(40, 24)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let text = buffer_text(&term);
+        assert!(
+            text.contains("lima"),
+            "tail of a long input must stay visible:\n{text}"
+        );
+    }
+
+    #[test]
+    fn input_taller_than_the_cap_scrolls_to_the_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        let mut app = App::new(store).unwrap();
+        app.begin_input(Input::Note);
+        for i in 0..120 {
+            type_str(&mut app, &format!("word{i} "));
+        }
+        let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        term.draw(|f| ui::draw(f, &mut app)).unwrap();
+        let text = buffer_text(&term);
+        assert!(
+            text.contains("word119"),
+            "the cursor end of the input must stay visible:\n{text}"
+        );
+        assert!(
+            text.contains("findings"),
+            "the rest of the UI must survive a huge input:\n{text}"
+        );
+    }
+
     #[test]
     fn resize_event_marks_the_tui_for_repaint() {
         let dir = tempfile::tempdir().unwrap();
