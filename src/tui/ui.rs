@@ -13,7 +13,18 @@ use crate::tui::app::{App, Input, Pane};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let size = f.area();
-    let footer_h = if app.input.is_some() { 3 } else { 1 };
+    // Grow the input box with its wrapped content, up to half the screen. The
+    // footer chunk spans the full frame width, so `size.width` is its width.
+    let input = app.input.is_some().then(|| {
+        let para = input_paragraph(app);
+        let wrap_width = size.width.saturating_sub(2).max(1);
+        let lines = para.line_count(wrap_width) as u16;
+        (para, lines)
+    });
+    let footer_h = match &input {
+        Some((_, lines)) => (*lines).clamp(3, (size.height / 2).max(3)),
+        None => 1,
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,10 +39,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let list_offset = draw_list(f, app, chunks[1]);
     let detail_max_scroll = draw_detail(f, app, chunks[2]);
     app.record_layout(chunks[1], chunks[2], list_offset, detail_max_scroll);
-    if app.input.is_some() {
-        draw_input(f, app, chunks[3]);
-    } else {
-        draw_footer(f, app, chunks[3]);
+    match input {
+        Some((para, lines)) => {
+            // Past the height cap, keep the tail (with the cursor) in view.
+            let scroll = lines.saturating_sub(chunks[3].height);
+            f.render_widget(para.scroll((scroll, 0)), chunks[3]);
+        }
+        None => draw_footer(f, app, chunks[3]),
     }
 
     if app.show_help {
@@ -287,7 +301,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(content), area);
 }
 
-fn draw_input(f: &mut Frame, app: &App, area: Rect) {
+fn input_paragraph(app: &App) -> Paragraph<'static> {
     let (title, prefix) = match app.input {
         Some(Input::Note) => (" note (Enter save · Esc cancel) ", "note> "),
         Some(Input::Chat) => (" message to agent (Enter send · Esc cancel) ", "chat> "),
@@ -299,7 +313,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
         Span::raw(app.input_buffer.clone()),
         Span::styled("▏", Style::default().fg(Color::Cyan)),
     ]);
-    f.render_widget(Paragraph::new(line).block(block), area);
+    Paragraph::new(line).block(block).wrap(Wrap { trim: false })
 }
 
 fn draw_help(f: &mut Frame, size: Rect) {
