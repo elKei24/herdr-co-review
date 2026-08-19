@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/elKei24/herdr-co-review/compare/v1.6.1...v1.7.0) (2026-08-19)
+
+
+### Features
+
+* **tui:** grow the input box to fit long text ([#15](https://github.com/elKei24/herdr-co-review/issues/15)) ([291ac32](https://github.com/elKei24/herdr-co-review/commit/291ac3245d2dc588a2b4865145be7fd46ddc1bca))
+
 ## [1.6.1](https://github.com/elKei24/herdr-co-review/compare/v1.6.0...v1.6.1) (2026-08-12)
 
 
