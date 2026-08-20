@@ -356,3 +356,36 @@ the guess is cheap to be wrong about. The alternative, a wrapper script that
 globs `<plugins>/github/<id>-*/` at run time, would survive a hash change but
 turns the PATH entry into a file the ownership checks cannot distinguish from a
 user-installed binary; decision 17's reasons for a symlink stand.
+
+## 19. The hand-off is push, not poll: the navigator notifies the agent (2026-08-20)
+
+The original contract (§2, §5) had the agent run `co-review wait` after handing
+off — a blocking subprocess that polls `state.json` until every finding is
+decided. In practice (reported by the user) that made Herdr show the agent as
+*busy* for the whole triage, which can take a while: the human cannot tell
+"working on the review" from "idling in `wait`", and agent-level automations
+that key off the busy state stall with it.
+
+The navigator already owns a delivery path into the agent pane (`herdr agent
+prompt`, §13), so the hand-back is now a push:
+
+- The prompt, protocol, and skill tell the agent to `set-status
+  awaiting_review`, say it is done, and **end its turn** — no blocking command.
+- When a state change completes the triage (`State::triage_done`: no pending
+  findings left, and only while the status is `awaiting_review`, so deciding
+  findings early never interrupts an agent that is still reviewing), the
+  navigator detects the edge on its state-ingestion path — so it fires no
+  matter whether the last verdict came from a TUI keypress or an external
+  `co-review verdict` — and injects
+  `protocol::TRIAGE_DONE_MSG` into the agent pane — the same path the `c` chat
+  and `P` nudge keys use, with the same graceful degradation when no pane is
+  wired.
+- Races where the human finishes triage *before* the agent hands off are closed
+  in the CLI: `set-status awaiting_review` prints whether findings are still
+  pending or everything is already decided, and a `verdict` that completes a
+  handed-off triage says so — so whichever side acts last, the agent learns the
+  outcome without polling.
+
+`co-review wait` stays, as a documented fallback for setups where the navigator
+cannot reach the agent (no Herdr, scripted/CI use); the docs now steer agents
+away from it inside a normal session.

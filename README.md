@@ -69,7 +69,7 @@ talk to each other through the `co-review` CLI:
    │ │ reviews, runs │◀─▶│ co-review view     │  │
    │ │ `co-review    │   │ select finding →   │  │
    │ │  add-finding` │   │ see code, triage,  │  │
-   │ │ then `wait`   │   │ chat, decide       │  │
+   │ │ hands off     │   │ chat, decide       │  │
    │ └───────────────┘   └────────────────────┘  │
    └─────────────────────────────────────────────┘
 ```
@@ -216,8 +216,10 @@ teaches Claude to use them):
 co-review add-finding --title "…" --severity high --category correctness \
   --location src/foo.rs:42-48 --body "…" [--suggestion "…"]
 co-review import findings.json        # bulk add from a JSON array
-co-review set-status awaiting_review
-co-review wait                        # block until you've decided every finding
+co-review set-status awaiting_review  # hand off; the agent then idles until the
+                                      # navigator says every finding is decided
+co-review wait                        # fallback: block until triage is done
+                                      # (for setups without Herdr)
 co-review list --json                 # read verdicts + your notes
 co-review edit f3 --body "…"          # revise a finding after you discuss it
 co-review mark-posted f3 --url <url>  # after posting to GitHub
