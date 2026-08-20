@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/elKei24/herdr-co-review/compare/v1.7.1...v1.8.0) (2026-08-20)
+
+
+### Features
+
+* notify the agent when triage is done instead of busy-waiting ([#18](https://github.com/elKei24/herdr-co-review/issues/18)) ([041aa78](https://github.com/elKei24/herdr-co-review/commit/041aa78cb0c7c5721cfc639c0b05a542357b3553))
+
 ## [1.7.1](https://github.com/elKei24/herdr-co-review/compare/v1.7.0...v1.7.1) (2026-08-20)
 
 
