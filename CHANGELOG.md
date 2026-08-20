@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/elKei24/herdr-co-review/compare/v1.7.0...v1.7.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **deps:** bump clap_mangen from 0.3.2 to 0.3.3 in the cargo-patch group ([#17](https://github.com/elKei24/herdr-co-review/issues/17)) ([cba6420](https://github.com/elKei24/herdr-co-review/commit/cba6420906ec5d8f0a1b8d2e89f9790f162d3976))
+
 # [1.7.0](https://github.com/elKei24/herdr-co-review/compare/v1.6.1...v1.7.0) (2026-08-19)
 
 
