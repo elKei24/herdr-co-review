@@ -186,18 +186,41 @@ fn full_agent_flow() {
     assert_eq!(v["findings"][0]["severity"], "critical");
     assert_eq!(v["findings"][0]["body"], "line 2 changed"); // untouched
 
-    // verdict approve
-    let (_o, err, ok) = co_review(&home, Some(&session), &work, &["verdict", "f1", "approved"]);
-    assert!(ok, "verdict failed: {err}");
-
-    // hand off + wait should return immediately (0 pending)
-    let (_o, _e, ok) = co_review(
+    // hand off while f1 is still pending → the agent is told to end its turn
+    let (out, _e, ok) = co_review(
         &home,
         Some(&session),
         &work,
         &["set-status", "awaiting_review"],
     );
     assert!(ok);
+    assert!(
+        out.contains("1 finding(s) pending") && out.contains("end your turn"),
+        "expected the pending hand-off hint: {out}"
+    );
+
+    // deciding the last finding tells the agent triage is done
+    let (out, err, ok) = co_review(&home, Some(&session), &work, &["verdict", "f1", "approved"]);
+    assert!(ok, "verdict failed: {err}");
+    assert!(
+        out.contains("all findings decided"),
+        "expected the triage-done hint: {out}"
+    );
+
+    // a hand-off after triage reports there is nothing left to wait for
+    let (out, _e, ok) = co_review(
+        &home,
+        Some(&session),
+        &work,
+        &["set-status", "awaiting_review"],
+    );
+    assert!(ok);
+    assert!(
+        out.contains("already decided"),
+        "expected the already-decided hint: {out}"
+    );
+
+    // the `wait` fallback returns immediately (0 pending)
     let (_o, err, ok) = co_review(&home, Some(&session), &work, &["wait", "--timeout", "3000"]);
     assert!(ok, "wait did not return: {err}");
 

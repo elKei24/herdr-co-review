@@ -8,6 +8,12 @@
 //! Both are plain text on purpose: any agent that can run shell commands can
 //! follow them, which is what makes co-review agent-agnostic.
 
+/// The message the navigator injects into the agent pane once the human has
+/// decided every finding. The prompt and protocol tell the agent to act on it,
+/// so keep the three texts in step.
+pub const TRIAGE_DONE_MSG: &str = "[co-review] Triage is done — every finding is decided. \
+Post the approved ones to GitHub, mark them posted, then set status done.";
+
 /// Placeholder in the prompt, replaced with the PR reference (e.g. `#123`).
 pub const PR_PLACEHOLDER: &str = "{pr}";
 /// Placeholder in the prompt, replaced with the absolute path to `CO_REVIEW.md`.
@@ -39,17 +45,19 @@ Your job:
    Repeat `--location path:line` (or `path:start-end`) for every relevant spot.
    The finding shows up live in my navigator the moment you run the command.
 
-3. When you have added all findings, run `co-review set-status awaiting_review`
-   and tell me you're done. Then run `co-review wait` — it blocks until I have
-   made a decision on every finding. While it blocks, I will be triaging on the
-   right and may message you here about specific findings; respond conversationally
-   and, if we agree a finding should change, update it with
-   `co-review verdict <id> ...` or `co-review add-finding` / edit as needed.
+3. When you have added all findings, run `co-review set-status awaiting_review`,
+   tell me you're done, and END YOUR TURN — do not run a blocking command or
+   poll. While I triage on the right, I may message you here about specific
+   findings; respond conversationally and, if we agree a finding should change,
+   update it with `co-review verdict <id> ...` or `co-review add-finding` / edit
+   as needed.
 
-4. Once `co-review wait` returns, post the approved findings to GitHub as inline
-   PR review comments (respect my per-finding notes; do NOT post dismissed ones),
-   then run `co-review mark-posted <id> --url <comment-url>` for each. Finally run
-   `co-review set-status done`.
+4. When I have decided every finding, my navigator sends a message into this
+   pane telling you to post (if `set-status` reported that everything is already
+   decided, post right away instead of waiting). Then post the approved findings
+   to GitHub as inline PR review comments (respect my per-finding notes; do NOT
+   post dismissed ones), then run `co-review mark-posted <id> --url <comment-url>`
+   for each. Finally run `co-review set-status done`.
 
 The full contract, including how to read my decisions back, is in {protocol}
 (also available via `co-review protocol`). Read it if anything is unclear.
@@ -70,11 +78,14 @@ because the commands find the session automatically.
 1. **Review.** Produce high-signal findings. Correctness bugs first.
 2. **Record.** One `co-review add-finding` per finding (see below). Findings
    appear live in the human's navigator.
-3. **Hand off.** `co-review set-status awaiting_review`, then `co-review wait`.
-4. **Collaborate.** While `wait` blocks, the human triages and may talk to you.
-   Adjust findings if you both agree.
-5. **Post.** When `wait` returns, post approved findings to GitHub, then
-   `co-review mark-posted <id> --url <url>` and `co-review set-status done`.
+3. **Hand off.** `co-review set-status awaiting_review`, tell the human you are
+   done, and end your turn. The command prints whether findings are still
+   pending or everything is already decided (then go straight to posting).
+4. **Collaborate.** While the human triages, they may message you. Adjust
+   findings if you both agree.
+5. **Post.** When the navigator messages you that every finding is decided,
+   post approved findings to GitHub, then `co-review mark-posted <id> --url <url>`
+   and `co-review set-status done`.
 
 ## Recording a finding
 
@@ -101,8 +112,13 @@ because the commands find the session automatically.
 - `co-review list --json` prints the full state, including each finding's
   `verdict` (`pending`, `approved`, `dismissed`, `needs_discussion`, `edited`)
   and any `user_note` the human attached.
+- You do not need to poll for the hand-off: once every finding is decided, the
+  navigator sends `[co-review] Triage is done …` into your pane.
 - `co-review wait` blocks until every finding has a verdict other than
-  `pending` (add `--timeout <ms>` to bound it). Use it for the hand-off.
+  `pending` (add `--timeout <ms>` to bound it). It is a fallback for setups
+  where the navigator cannot message you (no Herdr, scripted runs); in a normal
+  session, end your turn instead — a blocking `wait` shows you as busy while
+  you are only waiting.
 - Only post findings whose verdict is `approved` or `edited`. Never post
   `dismissed` ones. For `needs_discussion`, resolve it with the human first.
 

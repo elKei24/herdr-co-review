@@ -193,12 +193,19 @@ impl App {
     /// Adopt a freshly-read state, keeping the same finding selected by id and
     /// invalidating the code cache (shas/locations may have changed).
     fn apply_state(&mut self, new_state: State) {
+        let was_done = self.state.triage_done();
         let prev = self.selected_id();
         self.state = new_state;
         self.reconcile_selection(prev.as_deref());
         self.code_cache.clear();
         self.ensure_code();
         self.dirty = true;
+        // Every state change flows through here (keypresses and external
+        // `co-review` commands alike), so the triage-done edge is caught no
+        // matter who decided the last finding.
+        if !was_done && self.state.triage_done() {
+            self.notify_triage_done();
+        }
     }
 
     /// Clamp/restore the selection index after the findings list changed.
@@ -348,6 +355,18 @@ impl App {
         }
     }
 
+    /// The triage of a handed-off review just completed: tell the agent to
+    /// proceed — it is sitting idle, not polling.
+    fn notify_triage_done(&mut self) {
+        match self.deliver_to_agent(crate::protocol::TRIAGE_DONE_MSG) {
+            Ok(true) => self.set_status("all findings decided — told the agent to post"),
+            Ok(false) => {
+                self.set_status("all findings decided — no agent pane wired; nudge it with P")
+            }
+            Err(e) => self.set_status(format!("all findings decided, but agent unreachable: {e}")),
+        }
+    }
+
     /// Begin collecting input (note or chat) for the selected finding.
     pub fn begin_input(&mut self, kind: Input) {
         if self.selected_id().is_none() {
@@ -436,7 +455,7 @@ impl App {
     /// Nudge the agent to post the approved findings.
     pub fn nudge_post(&mut self) {
         let msg = if self.state.pending_count() == 0 {
-            "All findings are decided — please post the approved ones to GitHub and mark them posted."
+            crate::protocol::TRIAGE_DONE_MSG
         } else {
             "Please post the findings I've already approved; I'll keep triaging the rest."
         };

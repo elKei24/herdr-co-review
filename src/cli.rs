@@ -45,7 +45,8 @@ pub enum Command {
     /// Revise an existing finding's fields (after you and the agent discuss it).
     Edit(EditArgs),
 
-    /// [agent] Block until every finding has a verdict.
+    /// [agent] Block until every finding has a verdict (fallback — in a Herdr
+    /// session the navigator messages the agent instead, so it can stay idle).
     Wait(WaitArgs),
 
     /// Post approved findings to GitHub as inline review comments (fallback for

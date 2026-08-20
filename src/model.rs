@@ -106,6 +106,13 @@ impl State {
         self.pending_count() == 0
             && (self.status != ReviewStatus::Reviewing || !self.findings.is_empty())
     }
+
+    /// Whether the review has been handed off AND fully triaged — the moment
+    /// the agent should proceed to posting. Shared by the CLI hints and the
+    /// navigator's push notification, so the gate has exactly one definition.
+    pub fn triage_done(&self) -> bool {
+        self.status == ReviewStatus::AwaitingReview && self.handoff_complete()
+    }
 }
 
 /// A one-pass tally of findings by state, shared by the CLI and TUI headers.
@@ -566,6 +573,20 @@ mod tests {
         // decided => complete
         s.findings[0].verdict = Verdict::Approved;
         assert!(s.handoff_complete());
+    }
+
+    #[test]
+    fn triage_done_requires_the_handoff_status() {
+        let mut s = State::new(sample_pr(), sample_session());
+        let mut f = Finding::new("f1".into(), "t".into());
+        f.verdict = Verdict::Approved;
+        s.findings.push(f);
+        // all decided, but the agent is still reviewing
+        assert!(!s.triage_done());
+        s.status = ReviewStatus::AwaitingReview;
+        assert!(s.triage_done());
+        s.findings[0].verdict = Verdict::Pending;
+        assert!(!s.triage_done());
     }
 
     #[test]

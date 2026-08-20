@@ -450,6 +450,76 @@ mod tests {
     }
 
     #[test]
+    fn deciding_the_last_finding_notifies_the_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        store
+            .update(|s| {
+                s.status = crate::model::ReviewStatus::AwaitingReview;
+                Ok(())
+            })
+            .unwrap();
+        let mut app = App::new(store).unwrap();
+        app.set_verdict(Verdict::Approved);
+        // No agent pane is wired in tests, so delivery is skipped — but the
+        // completion must be detected and surfaced.
+        let status = app.status_line().unwrap_or_default().to_string();
+        assert!(
+            status.contains("all findings decided"),
+            "expected a triage-done notification, got: {status}"
+        );
+
+        // Re-deciding an already-complete triage must not re-notify.
+        app.set_verdict(Verdict::Dismissed);
+        let status = app.status_line().unwrap_or_default().to_string();
+        assert!(
+            !status.contains("all findings decided"),
+            "must not notify again, got: {status}"
+        );
+    }
+
+    #[test]
+    fn an_external_verdict_also_triggers_the_notification() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        store
+            .update(|s| {
+                s.status = crate::model::ReviewStatus::AwaitingReview;
+                Ok(())
+            })
+            .unwrap();
+        let mut app = App::new(store).unwrap();
+        // Decide the finding outside the TUI (as `co-review verdict` would).
+        Store::new(dir.path())
+            .update(|s| {
+                s.findings[0].verdict = Verdict::Approved;
+                Ok(())
+            })
+            .unwrap();
+        app.poll_reload();
+        let status = app.status_line().unwrap_or_default().to_string();
+        assert!(
+            status.contains("all findings decided"),
+            "expected a triage-done notification, got: {status}"
+        );
+    }
+
+    #[test]
+    fn no_notification_while_the_agent_is_still_reviewing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = seed(dir.path());
+        let mut app = App::new(store).unwrap();
+        // Status is still `reviewing`: the agent may add more findings, so
+        // deciding the only one so far must not trigger the hand-back.
+        app.set_verdict(Verdict::Approved);
+        let status = app.status_line().unwrap_or_default().to_string();
+        assert!(
+            !status.contains("all findings decided"),
+            "premature notification: {status}"
+        );
+    }
+
+    #[test]
     fn verdict_key_updates_state_and_persists() {
         let dir = tempfile::tempdir().unwrap();
         let store = seed(dir.path());

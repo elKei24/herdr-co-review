@@ -5,8 +5,9 @@ description: >-
   `co-review` CLI. Use this whenever you are reviewing a pull request inside a
   co-review session (the environment variable CO_REVIEW_SESSION is set, or the
   opening prompt references co-review): record each finding with
-  `co-review add-finding` instead of posting, hand off with `co-review wait`,
-  then post the human-approved findings and mark them posted.
+  `co-review add-finding` instead of posting, hand off with
+  `co-review set-status awaiting_review` and end your turn, then post the
+  human-approved findings and mark them posted.
 ---
 
 # co-review (agent side)
@@ -50,18 +51,23 @@ subcommands then find the session automatically; no `--session` needed.
 
    ```
    co-review set-status awaiting_review
-   co-review wait          # blocks until the human has decided every finding
    ```
 
-   Tell the human you're done and waiting.
+   Tell the human you're done, then **end your turn**. Do not run `co-review
+   wait` or poll in a loop — a blocking command shows you as busy while you are
+   only waiting. The navigator messages you when triage is done. If the
+   `set-status` output says every finding is already decided, skip ahead and
+   post right away.
 
-4. **Collaborate while you wait.** The human may message you about a specific
-   finding (their messages arrive prefixed like `[co-review f3] …`). Discuss it.
-   If you both agree a finding should change, update it: `co-review verdict f3
-   dismissed`, or revise its text with `co-review edit f3 --body "…"` (only the
-   fields you pass change), or add a new finding.
+4. **Collaborate while the human triages.** The human may message you about a
+   specific finding (their messages arrive prefixed like `[co-review f3] …`).
+   Discuss it. If you both agree a finding should change, update it: `co-review
+   verdict f3 dismissed`, or revise its text with `co-review edit f3 --body "…"`
+   (only the fields you pass change), or add a new finding.
 
-5. **Post.** When `co-review wait` returns, read the decisions and post:
+5. **Post.** When the navigator tells you triage is done (a message like
+   `[co-review] Triage is done — every finding is decided. …`), read the
+   decisions and post:
 
    ```
    co-review list --json    # inspect each finding's verdict + user_note

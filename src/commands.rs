@@ -123,7 +123,7 @@ pub fn verdict(args: &VerdictArgs) -> Result<()> {
     let store = open_store(&args.session)?;
     let verdict = Verdict::parse(&args.verdict)
         .ok_or_else(|| anyhow!("unknown verdict '{}'", args.verdict))?;
-    store.update(|state| {
+    let triage_done = store.update(|state| {
         let note = args.note.clone();
         let f = state
             .finding_mut(&args.id)
@@ -133,9 +133,12 @@ pub fn verdict(args: &VerdictArgs) -> Result<()> {
             f.user_note = Some(note);
         }
         f.touch();
-        Ok(())
+        Ok(state.triage_done())
     })?;
     println!("{} -> {}", args.id, verdict.label());
+    if triage_done {
+        println!("all findings decided — post the approved ones");
+    }
     Ok(())
 }
 
@@ -227,11 +230,23 @@ pub fn set_status(args: &SetStatusArgs) -> Result<()> {
     let store = open_store(&args.session)?;
     let status = ReviewStatus::parse(&args.status)
         .ok_or_else(|| anyhow!("unknown status '{}'", args.status))?;
-    store.update(|state| {
+    let pending = store.update(|state| {
         state.status = status;
-        Ok(())
+        Ok(state.pending_count())
     })?;
     println!("status: {}", status.label());
+    // Once the status is awaiting_review, "handed off and fully triaged" is
+    // exactly "nothing pending".
+    if status == ReviewStatus::AwaitingReview {
+        if pending == 0 {
+            println!("all findings already decided — post the approved ones now");
+        } else {
+            println!(
+                "{pending} finding(s) pending — end your turn; the navigator will \
+                 message you when triage is done"
+            );
+        }
+    }
     Ok(())
 }
 
