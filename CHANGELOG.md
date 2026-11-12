@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/elKei24/herdr-co-review/compare/v1.8.1...v1.8.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **deps:** bump the cargo-patch group across 1 directory with 3 updates ([#30](https://github.com/elKei24/herdr-co-review/issues/30)) ([11e4b08](https://github.com/elKei24/herdr-co-review/commit/11e4b08255c131baa053fb9fae2c9efb785660b3))
+
 ## [1.8.1](https://github.com/elKei24/herdr-co-review/compare/v1.8.0...v1.8.1) (2026-09-12)
 
 
